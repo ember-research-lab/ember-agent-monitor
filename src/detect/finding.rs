@@ -39,7 +39,10 @@ impl Finding {
         let mut o: Vec<(String, JsonValue)> = Vec::with_capacity(12);
         o.push(("type".into(), JsonValue::Str(self.finding_type.clone())));
         o.push(("scope".into(), JsonValue::Str(self.scope.as_str().into())));
-        o.push(("severity".into(), JsonValue::Str(self.severity.as_str().into())));
+        o.push((
+            "severity".into(),
+            JsonValue::Str(self.severity.as_str().into()),
+        ));
         o.push(("session_id".into(), JsonValue::Str(self.session_id.clone())));
         if let Some(e) = &self.event_id {
             o.push(("event_id".into(), JsonValue::Str(e.clone())));

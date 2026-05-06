@@ -86,7 +86,10 @@ pub fn read_request<R: Read>(stream: R) -> io::Result<HttpRequest> {
     let mut rdr = BufReader::new(stream);
     let line = read_bounded_line(&mut rdr, MAX_REQUEST_LINE_BYTES)?;
     if line.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "empty request"));
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "empty request",
+        ));
     }
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let mut parts = trimmed.split_whitespace();
@@ -109,7 +112,10 @@ pub fn read_request<R: Read>(stream: R) -> io::Result<HttpRequest> {
     let mut headers = Vec::new();
     loop {
         if headers.len() >= MAX_HEADERS {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "too many headers"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "too many headers",
+            ));
         }
         let h = read_bounded_line(&mut rdr, MAX_HEADER_BYTES)?;
         let h = h.trim_end_matches(['\r', '\n']);
@@ -120,7 +126,10 @@ pub fn read_request<R: Read>(stream: R) -> io::Result<HttpRequest> {
             let name = h[..colon].trim();
             let value = h[colon + 1..].trim();
             if name.bytes().any(|b| b < 0x20 || b == 0x7F) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "bad header name"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bad header name",
+                ));
             }
             headers.push((name.to_string(), value.to_string()));
         } else {

@@ -63,21 +63,44 @@ impl Baseline {
     /// grows; bumps require a CHANGELOG entry.
     pub fn default_baseline() -> Self {
         Self {
-            fiedler: Envelope { low: 0.012, high: 0.119 },
-            spectral_dimension: Envelope { low: 0.788, high: 1.220 },
+            fiedler: Envelope {
+                low: 0.012,
+                high: 0.119,
+            },
+            spectral_dimension: Envelope {
+                low: 0.788,
+                high: 1.220,
+            },
             heat_trace_samples: vec![
-                (0.1, Envelope { low: 0.85, high: 0.99 }),
-                (1.0, Envelope { low: 0.40, high: 0.92 }),
-                (10.0, Envelope { low: 0.06, high: 0.55 }),
+                (
+                    0.1,
+                    Envelope {
+                        low: 0.85,
+                        high: 0.99,
+                    },
+                ),
+                (
+                    1.0,
+                    Envelope {
+                        low: 0.40,
+                        high: 0.92,
+                    },
+                ),
+                (
+                    10.0,
+                    Envelope {
+                        low: 0.06,
+                        high: 0.55,
+                    },
+                ),
             ],
         }
     }
 
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let text = std::fs::read_to_string(path)?;
-        let v = parse(&text).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}"))
-        })?;
+        let v = parse(&text)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{e:?}")))?;
         Self::from_json(&v).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
@@ -186,7 +209,11 @@ fn parse_envelope(obj: &[(String, JsonValue)], key: &str) -> Result<Envelope, St
 }
 
 fn parse_samples(obj: &[(String, JsonValue)]) -> Result<Vec<(f64, Envelope)>, String> {
-    let arr = match obj.iter().find(|(k, _)| k == "heat_trace_samples").map(|(_, v)| v) {
+    let arr = match obj
+        .iter()
+        .find(|(k, _)| k == "heat_trace_samples")
+        .map(|(_, v)| v)
+    {
         Some(JsonValue::Array(a)) => a,
         _ => return Err("heat_trace_samples missing or wrong type".into()),
     };
@@ -237,7 +264,10 @@ mod tests {
 
     #[test]
     fn envelope_deviation() {
-        let e = Envelope { low: 0.0, high: 1.0 };
+        let e = Envelope {
+            low: 0.0,
+            high: 1.0,
+        };
         assert_eq!(e.deviation(0.5), 0.0);
         assert_eq!(e.deviation(-0.2), 0.2);
         assert_eq!(e.deviation(1.5), 0.5);

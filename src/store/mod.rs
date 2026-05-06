@@ -55,9 +55,7 @@ impl Store {
 
     pub fn findings_path(&self, session_id: &str) -> PathBuf {
         let safe = sanitize(session_id);
-        self.base_dir
-            .join("findings")
-            .join(format!("{safe}.jsonl"))
+        self.base_dir.join("findings").join(format!("{safe}.jsonl"))
     }
 
     pub fn summary_path(&self, session_id: &str) -> PathBuf {

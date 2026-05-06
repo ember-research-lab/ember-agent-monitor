@@ -178,13 +178,15 @@ fn find_command_chain(s: &str) -> Option<()> {
     ];
     while i < bytes.len() {
         let chain_marker = bytes[i] == b';'
-            || (i + 1 < bytes.len()
-                && (bytes[i] == b'&' && bytes[i + 1] == b'&')
+            || (i + 1 < bytes.len() && (bytes[i] == b'&' && bytes[i + 1] == b'&')
                 || (bytes[i] == b'|' && bytes[i + 1] == b'|'));
         if chain_marker {
             let mut j = i + 1;
             // For && / || skip the second byte too.
-            if i + 1 < bytes.len() && (bytes[i] == b'&' || bytes[i] == b'|') && bytes[i] == bytes[i + 1] {
+            if i + 1 < bytes.len()
+                && (bytes[i] == b'&' || bytes[i] == b'|')
+                && bytes[i] == bytes[i + 1]
+            {
                 j = i + 2;
             }
             while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {

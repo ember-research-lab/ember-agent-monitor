@@ -130,7 +130,9 @@ fn load_expected(path: &PathBuf) -> Result<Expected, String> {
         let sev = string_field(o, "severity").unwrap_or_default();
         *by.entry((t, scope, sev)).or_insert(0) += 1;
     }
-    Ok(Expected { by_type_severity: by })
+    Ok(Expected {
+        by_type_severity: by,
+    })
 }
 
 fn count_findings(

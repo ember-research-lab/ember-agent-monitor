@@ -33,9 +33,7 @@ impl EventLogWriter {
         self.file
             .write_all(line.as_bytes())
             .map_err(|e| format!("write event: {e}"))?;
-        self.file
-            .flush()
-            .map_err(|e| format!("flush event: {e}"))
+        self.file.flush().map_err(|e| format!("flush event: {e}"))
     }
 }
 
@@ -48,8 +46,8 @@ pub fn read_all(path: &Path) -> Result<Vec<Event>, String> {
         if line.trim().is_empty() {
             continue;
         }
-        let ev = crate::event::parse_jsonl_line(&line)
-            .map_err(|e| format!("parse line {i}: {e}"))?;
+        let ev =
+            crate::event::parse_jsonl_line(&line).map_err(|e| format!("parse line {i}: {e}"))?;
         out.push(ev);
     }
     Ok(out)

@@ -24,7 +24,10 @@ fn cyata_fixture_emits_spectral_diagnostics() {
         profile.n_nodes, profile.fiedler_value, profile.spectral_dimension
     );
     eprintln!("eigenvalues: {:?}", profile.eigenvalues);
-    eprintln!("heat_trace[0..5]: {:?}", &profile.heat_trace[..5.min(profile.heat_trace.len())]);
+    eprintln!(
+        "heat_trace[0..5]: {:?}",
+        &profile.heat_trace[..5.min(profile.heat_trace.len())]
+    );
 
     let findings = run_all(&events, &cfg);
     let spectral_findings: Vec<_> = findings
@@ -33,9 +36,18 @@ fn cyata_fixture_emits_spectral_diagnostics() {
         .collect();
     eprintln!("spectral findings:");
     for f in &spectral_findings {
-        eprintln!("  - {} [{}]: {}", f.finding_type, f.severity.as_str(), f.rationale);
+        eprintln!(
+            "  - {} [{}]: {}",
+            f.finding_type,
+            f.severity.as_str(),
+            f.rationale
+        );
     }
 
-    assert!(profile.n_nodes >= 5, "expected meaningful node count, got {}", profile.n_nodes);
+    assert!(
+        profile.n_nodes >= 5,
+        "expected meaningful node count, got {}",
+        profile.n_nodes
+    );
     assert!(profile.fiedler_value > 0.0);
 }

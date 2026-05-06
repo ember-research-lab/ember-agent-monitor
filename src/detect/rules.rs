@@ -222,11 +222,7 @@ pub fn lethal_trifecta_reachability(graph: &SessionGraph, out: &mut Vec<Finding>
 
 /// Spec §4: sensitive_zone_access. Walks tool_call input args, classifies
 /// any path-shaped value, fires HIGH if it lands in `sensitive_local`.
-pub fn sensitive_zone_access(
-    event: &Event,
-    cfg: &super::DetectionConfig,
-    out: &mut Vec<Finding>,
-) {
+pub fn sensitive_zone_access(event: &Event, cfg: &super::DetectionConfig, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolCall {
         return;
     }
@@ -244,11 +240,7 @@ pub fn sensitive_zone_access(
             continue;
         }
         let normalized = normalize_path(&s);
-        let zone = classify_path(
-            &normalized,
-            cfg.workspace_root.as_deref(),
-            &cfg.sensitive,
-        );
+        let zone = classify_path(&normalized, cfg.workspace_root.as_deref(), &cfg.sensitive);
         if zone == TrustZone::SensitiveLocal {
             let score = PATTERN_HIT_WEIGHT * zone.inverse_trust() * Severity::High.weight();
             out.push(Finding {
@@ -262,9 +254,7 @@ pub fn sensitive_zone_access(
                 matched_value: Some(s.clone()),
                 pattern: None,
                 trust_zone: Some(zone),
-                rationale: format!(
-                    "Tool call to {tool} references sensitive path via {k}"
-                ),
+                rationale: format!("Tool call to {tool} references sensitive path via {k}"),
                 score,
             });
         }
@@ -325,11 +315,7 @@ pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {
 /// detection on the result body alone misses this — the body might be
 /// innocuous text; the *consequence* (skill activation) is what's
 /// suspicious.
-pub fn trigger_cause_violation(
-    event: &Event,
-    graph: &SessionGraph,
-    out: &mut Vec<Finding>,
-) {
+pub fn trigger_cause_violation(event: &Event, graph: &SessionGraph, out: &mut Vec<Finding>) {
     if !matches!(
         event.kind,
         EventKind::SkillLoad | EventKind::HookRegistration
@@ -473,8 +459,8 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     }
     for (_label, matcher) in patterns::instruction_patterns() {
         if let Some(label) = matcher(&content) {
-            let score = PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust()
-                * Severity::Medium.weight();
+            let score =
+                PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * Severity::Medium.weight();
             out.push(Finding {
                 finding_type: "instruction_shape_in_tool_result".into(),
                 scope: FindingScope::Dynamic,

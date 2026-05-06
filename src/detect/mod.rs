@@ -14,10 +14,10 @@ pub mod patterns;
 pub mod rules;
 pub mod toxic;
 
-pub use finding::{Finding, FindingScope};
 use crate::event::Event;
 use crate::graph::SessionGraph;
 use crate::trust::sensitive::SensitiveSet;
+pub use finding::{Finding, FindingScope};
 
 /// Configuration loaded once at daemon startup, governs which rules fire
 /// and at what threshold. User-extensible patterns are merged from

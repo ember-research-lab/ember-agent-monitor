@@ -84,8 +84,10 @@ impl VetpkgFindings {
 }
 
 fn string_field(obj: &[(String, JsonValue)], key: &str) -> Option<String> {
-    obj.iter().find(|(k, _)| k == key).and_then(|(_, v)| match v {
-        JsonValue::Str(s) => Some(s.clone()),
-        _ => None,
-    })
+    obj.iter()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, v)| match v {
+            JsonValue::Str(s) => Some(s.clone()),
+            _ => None,
+        })
 }
