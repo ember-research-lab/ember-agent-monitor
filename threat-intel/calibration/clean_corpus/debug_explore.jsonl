@@ -1,0 +1,20 @@
+{"kind": "session_start", "session_id": "clean-debug-1", "timestamp": "2026-05-05T10:00:00Z", "model": "claude-opus", "cwd": "/home/aaron/work/svc"}
+{"kind": "mcp_registration", "session_id": "clean-debug-1", "timestamp": "2026-05-05T10:00:00Z", "server_name": "filesystem", "tools": ["read_file", "list_directory"]}
+{"kind": "user_prompt", "session_id": "clean-debug-1", "uuid": "u1", "timestamp": "2026-05-05T10:00:01Z"}
+{"kind": "model_text", "session_id": "clean-debug-1", "uuid": "m1", "parent_uuid": "u1", "timestamp": "2026-05-05T10:00:02Z"}
+{"kind": "tool_call", "session_id": "clean-debug-1", "uuid": "tc1", "parent_uuid": "m1", "timestamp": "2026-05-05T10:00:03Z", "tool_use_id": "t1", "tool_name": "list_directory", "args": {"path": "/home/aaron/work/svc/src"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-debug-1", "uuid": "tr1", "parent_uuid": "tc1", "timestamp": "2026-05-05T10:00:04Z", "tool_use_id": "t1", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-debug-1", "uuid": "m2", "parent_uuid": "tr1", "timestamp": "2026-05-05T10:00:05Z"}
+{"kind": "tool_call", "session_id": "clean-debug-1", "uuid": "tc2", "parent_uuid": "m2", "timestamp": "2026-05-05T10:00:06Z", "tool_use_id": "t2", "tool_name": "read_file", "args": {"path": "/home/aaron/work/svc/src/handler.rs"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-debug-1", "uuid": "tr2", "parent_uuid": "tc2", "timestamp": "2026-05-05T10:00:07Z", "tool_use_id": "t2", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-debug-1", "uuid": "m3", "parent_uuid": "tr2", "timestamp": "2026-05-05T10:00:08Z"}
+{"kind": "tool_call", "session_id": "clean-debug-1", "uuid": "tc3", "parent_uuid": "m3", "timestamp": "2026-05-05T10:00:09Z", "tool_use_id": "t3", "tool_name": "read_file", "args": {"path": "/home/aaron/work/svc/src/middleware.rs"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-debug-1", "uuid": "tr3", "parent_uuid": "tc3", "timestamp": "2026-05-05T10:00:10Z", "tool_use_id": "t3", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-debug-1", "uuid": "m4", "parent_uuid": "tr3", "timestamp": "2026-05-05T10:00:11Z"}
+{"kind": "tool_call", "session_id": "clean-debug-1", "uuid": "tc4", "parent_uuid": "m4", "timestamp": "2026-05-05T10:00:12Z", "tool_use_id": "t4", "tool_name": "read_file", "args": {"path": "/home/aaron/work/svc/src/error.rs"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-debug-1", "uuid": "tr4", "parent_uuid": "tc4", "timestamp": "2026-05-05T10:00:13Z", "tool_use_id": "t4", "trust_zone": "untrusted_tool_output"}
+{"kind": "user_prompt", "session_id": "clean-debug-1", "uuid": "u2", "timestamp": "2026-05-05T10:00:14Z"}
+{"kind": "model_text", "session_id": "clean-debug-1", "uuid": "m5", "parent_uuid": "u2", "timestamp": "2026-05-05T10:00:15Z"}
+{"kind": "tool_call", "session_id": "clean-debug-1", "uuid": "tc5", "parent_uuid": "m5", "timestamp": "2026-05-05T10:00:16Z", "tool_use_id": "t5", "tool_name": "read_file", "args": {"path": "/home/aaron/work/svc/Cargo.toml"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-debug-1", "uuid": "tr5", "parent_uuid": "tc5", "timestamp": "2026-05-05T10:00:17Z", "tool_use_id": "t5", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-debug-1", "uuid": "m6", "parent_uuid": "tr5", "timestamp": "2026-05-05T10:00:18Z"}

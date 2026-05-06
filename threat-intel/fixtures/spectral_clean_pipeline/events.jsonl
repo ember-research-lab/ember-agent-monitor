@@ -1,0 +1,5 @@
+{"kind": "session_start", "session_id": "spectral-clean-1", "timestamp": "2026-05-05T11:00:00Z", "model": "claude-opus", "cwd": "/home/aaron/work"}
+{"kind": "mcp_registration", "session_id": "spectral-clean-1", "timestamp": "2026-05-05T11:00:00Z", "server_name": "filesystem", "tools": ["read_file", "write_file"]}
+{"kind": "tool_call", "session_id": "spectral-clean-1", "uuid": "tc1", "timestamp": "2026-05-05T11:00:01Z", "tool_use_id": "t1", "tool_name": "read_file", "args": {"path": "/home/aaron/work/release-notes.md"}, "arg_zones": {"path": "workspace"}}
+{"kind": "tool_call", "session_id": "spectral-clean-1", "uuid": "tc2", "timestamp": "2026-05-05T11:00:02Z", "tool_use_id": "t2", "tool_name": "write_file", "args": {"path": "/home/aaron/work/staging.txt", "content": "summary"}, "arg_zones": {"path": "workspace"}}
+{"kind": "tool_call", "session_id": "spectral-clean-1", "uuid": "tc3", "timestamp": "2026-05-05T11:00:03Z", "tool_use_id": "t3", "tool_name": "webfetch", "args": {"url": "https://api.example.com/log", "method": "POST", "body": "summary"}, "arg_zones": {}}

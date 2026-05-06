@@ -1,0 +1,6 @@
+{
+  "fixture": "spectral_clean_pipeline",
+  "expected_findings": [
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

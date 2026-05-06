@@ -1,0 +1,9 @@
+{"kind": "session_start", "session_id": "clean-chat-1", "timestamp": "2026-05-05T15:00:00Z", "model": "claude-opus", "cwd": "/home/aaron"}
+{"kind": "user_prompt", "session_id": "clean-chat-1", "uuid": "u1", "timestamp": "2026-05-05T15:00:01Z"}
+{"kind": "model_text", "session_id": "clean-chat-1", "uuid": "m1", "parent_uuid": "u1", "timestamp": "2026-05-05T15:00:02Z"}
+{"kind": "user_prompt", "session_id": "clean-chat-1", "uuid": "u2", "parent_uuid": "m1", "timestamp": "2026-05-05T15:00:03Z"}
+{"kind": "model_text", "session_id": "clean-chat-1", "uuid": "m2", "parent_uuid": "u2", "timestamp": "2026-05-05T15:00:04Z"}
+{"kind": "user_prompt", "session_id": "clean-chat-1", "uuid": "u3", "parent_uuid": "m2", "timestamp": "2026-05-05T15:00:05Z"}
+{"kind": "model_text", "session_id": "clean-chat-1", "uuid": "m3", "parent_uuid": "u3", "timestamp": "2026-05-05T15:00:06Z"}
+{"kind": "user_prompt", "session_id": "clean-chat-1", "uuid": "u4", "parent_uuid": "m3", "timestamp": "2026-05-05T15:00:07Z"}
+{"kind": "model_text", "session_id": "clean-chat-1", "uuid": "m4", "parent_uuid": "u4", "timestamp": "2026-05-05T15:00:08Z"}

@@ -1,0 +1,13 @@
+{"kind": "session_start", "session_id": "clean-research-1", "timestamp": "2026-05-05T13:00:00Z", "model": "claude-opus", "cwd": "/home/aaron/work/notes"}
+{"kind": "mcp_registration", "session_id": "clean-research-1", "timestamp": "2026-05-05T13:00:00Z", "server_name": "filesystem", "tools": ["read_file", "write_file"]}
+{"kind": "user_prompt", "session_id": "clean-research-1", "uuid": "u1", "timestamp": "2026-05-05T13:00:01Z"}
+{"kind": "model_text", "session_id": "clean-research-1", "uuid": "m1", "parent_uuid": "u1", "timestamp": "2026-05-05T13:00:02Z"}
+{"kind": "tool_call", "session_id": "clean-research-1", "uuid": "tc1", "parent_uuid": "m1", "timestamp": "2026-05-05T13:00:03Z", "tool_use_id": "t1", "tool_name": "webfetch", "args": {"url": "https://docs.rs/serde/latest/"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-research-1", "uuid": "tr1", "parent_uuid": "tc1", "timestamp": "2026-05-05T13:00:04Z", "tool_use_id": "t1", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-research-1", "uuid": "m2", "parent_uuid": "tr1", "timestamp": "2026-05-05T13:00:05Z"}
+{"kind": "tool_call", "session_id": "clean-research-1", "uuid": "tc2", "parent_uuid": "m2", "timestamp": "2026-05-05T13:00:06Z", "tool_use_id": "t2", "tool_name": "webfetch", "args": {"url": "https://serde.rs/derive.html"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-research-1", "uuid": "tr2", "parent_uuid": "tc2", "timestamp": "2026-05-05T13:00:07Z", "tool_use_id": "t2", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-research-1", "uuid": "m3", "parent_uuid": "tr2", "timestamp": "2026-05-05T13:00:08Z"}
+{"kind": "tool_call", "session_id": "clean-research-1", "uuid": "tc3", "parent_uuid": "m3", "timestamp": "2026-05-05T13:00:09Z", "tool_use_id": "t3", "tool_name": "write_file", "args": {"path": "/home/aaron/work/notes/serde-summary.md", "content": "summary"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-research-1", "uuid": "tr3", "parent_uuid": "tc3", "timestamp": "2026-05-05T13:00:10Z", "tool_use_id": "t3", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-research-1", "uuid": "m4", "parent_uuid": "tr3", "timestamp": "2026-05-05T13:00:11Z"}

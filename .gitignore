@@ -1,0 +1,14 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Local Claude Code state (handoffs, summaries)
+.claude/
+
+# Local Claude Code state
+.claude/

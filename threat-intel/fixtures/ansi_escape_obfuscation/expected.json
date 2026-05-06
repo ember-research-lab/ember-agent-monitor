@@ -1,0 +1,26 @@
+{
+  "_note": "Tool result hides directives via ANSI conceal sequences. instruction_shape catches both the imperative ('the assistant must') and the ansi-escape pattern. Spectral picks up the shape.",
+  "expected_findings": [
+    {
+      "type": "instruction_shape_in_tool_result",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "instruction_shape_in_tool_result",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "spectral_anomaly",
+      "scope": "static",
+      "severity": "medium"
+    },
+    {
+      "type": "spectral_motif_match",
+      "scope": "static",
+      "severity": "medium"
+    }
+  ],
+  "fixture": "ansi_escape_obfuscation"
+}

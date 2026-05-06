@@ -1,0 +1,21 @@
+{
+  "_note": "Trail-of-Bits line jumping: malicious instruction sits in the initial tools/list payload, never invoked. Same MCPoison rule fires because instruction_shape_in_mcp_description treats descriptions as suspect regardless of swap-vs-initial.",
+  "expected_findings": [
+    {
+      "type": "instruction_shape_in_mcp_description",
+      "scope": "static",
+      "severity": "high"
+    },
+    {
+      "type": "spectral_anomaly",
+      "scope": "static",
+      "severity": "medium"
+    },
+    {
+      "type": "spectral_motif_match",
+      "scope": "static",
+      "severity": "medium"
+    }
+  ],
+  "fixture": "line_jumping_initial_tools_list"
+}

@@ -1,0 +1,16 @@
+{
+  "_note": "CVE-2025-48384: write to .git/hooks/post-checkout via poisoned submodule. sensitive_zone_access fires now that .git/hooks is in the default component set.",
+  "expected_findings": [
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "spectral_motif_match",
+      "scope": "static",
+      "severity": "medium"
+    }
+  ],
+  "fixture": "git_hooks_write"
+}

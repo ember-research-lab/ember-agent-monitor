@@ -1,0 +1,15 @@
+{"kind": "session_start", "session_id": "clean-refactor-1", "timestamp": "2026-05-05T14:00:00Z", "model": "claude-opus", "cwd": "/home/aaron/work/api"}
+{"kind": "mcp_registration", "session_id": "clean-refactor-1", "timestamp": "2026-05-05T14:00:00Z", "server_name": "filesystem", "tools": ["read_file", "write_file"]}
+{"kind": "user_prompt", "session_id": "clean-refactor-1", "uuid": "u1", "timestamp": "2026-05-05T14:00:01Z"}
+{"kind": "model_text", "session_id": "clean-refactor-1", "uuid": "m1", "parent_uuid": "u1", "timestamp": "2026-05-05T14:00:02Z"}
+{"kind": "tool_call", "session_id": "clean-refactor-1", "uuid": "tc1", "parent_uuid": "m1", "timestamp": "2026-05-05T14:00:03Z", "tool_use_id": "t1", "tool_name": "read_file", "args": {"path": "/home/aaron/work/api/src/lib.rs"}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-refactor-1", "uuid": "tr1", "parent_uuid": "tc1", "timestamp": "2026-05-05T14:00:04Z", "tool_use_id": "t1", "trust_zone": "untrusted_tool_output"}
+{"kind": "tool_call", "session_id": "clean-refactor-1", "uuid": "tc2", "parent_uuid": "tr1", "timestamp": "2026-05-05T14:00:05Z", "tool_use_id": "t2", "tool_name": "write_file", "args": {"path": "/home/aaron/work/api/src/handler.rs", "content": "..."}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-refactor-1", "uuid": "tr2", "parent_uuid": "tc2", "timestamp": "2026-05-05T14:00:06Z", "tool_use_id": "t2", "trust_zone": "untrusted_tool_output"}
+{"kind": "tool_call", "session_id": "clean-refactor-1", "uuid": "tc3", "parent_uuid": "tr2", "timestamp": "2026-05-05T14:00:07Z", "tool_use_id": "t3", "tool_name": "write_file", "args": {"path": "/home/aaron/work/api/src/router.rs", "content": "..."}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-refactor-1", "uuid": "tr3", "parent_uuid": "tc3", "timestamp": "2026-05-05T14:00:08Z", "tool_use_id": "t3", "trust_zone": "untrusted_tool_output"}
+{"kind": "tool_call", "session_id": "clean-refactor-1", "uuid": "tc4", "parent_uuid": "tr3", "timestamp": "2026-05-05T14:00:09Z", "tool_use_id": "t4", "tool_name": "write_file", "args": {"path": "/home/aaron/work/api/src/lib.rs", "content": "..."}, "arg_zones": {}}
+{"kind": "tool_result", "session_id": "clean-refactor-1", "uuid": "tr4", "parent_uuid": "tc4", "timestamp": "2026-05-05T14:00:10Z", "tool_use_id": "t4", "trust_zone": "untrusted_tool_output"}
+{"kind": "model_text", "session_id": "clean-refactor-1", "uuid": "m2", "parent_uuid": "tr4", "timestamp": "2026-05-05T14:00:11Z"}
+{"kind": "user_prompt", "session_id": "clean-refactor-1", "uuid": "u2", "timestamp": "2026-05-05T14:00:12Z"}
+{"kind": "model_text", "session_id": "clean-refactor-1", "uuid": "m3", "parent_uuid": "u2", "timestamp": "2026-05-05T14:00:13Z"}
