@@ -228,7 +228,7 @@ mod tests {
             assert!(!m.eigenvalues.is_empty());
             // Normalized Laplacian eigenvalues lie in [0, 2].
             for &e in &m.eigenvalues {
-                assert!(e >= -1e-9 && e <= 2.0 + 1e-9, "out-of-range λ={e}");
+                assert!((-1e-9..=2.0 + 1e-9).contains(&e), "out-of-range λ={e}");
             }
         }
     }

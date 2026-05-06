@@ -112,20 +112,10 @@ impl SessionSummary {
             event_log_path: event_log_path.to_path_buf(),
             event_count: graph.dynamic_graph.events.len(),
             kind_counts,
-            capability_set: graph
-                .static_graph
-                .capabilities
-                .iter()
-                .cloned()
-                .collect(),
+            capability_set: graph.static_graph.capabilities.iter().cloned().collect(),
             mcp_servers: graph.static_graph.mcp_servers.keys().cloned().collect(),
             skills_loaded: graph.static_graph.skills.iter().cloned().collect(),
-            hooks_registered_count: graph
-                .static_graph
-                .hooks
-                .values()
-                .map(|v| v.len())
-                .sum(),
+            hooks_registered_count: graph.static_graph.hooks.values().map(|v| v.len()).sum(),
             plugins_installed: graph.static_graph.plugins.iter().cloned().collect(),
             findings_count: findings.len(),
             findings_by_type,
@@ -153,7 +143,10 @@ impl SessionSummary {
             JsonValue::Number(SUMMARY_SCHEMA_VERSION as f64),
         ));
         o.push(("session_id".into(), JsonValue::Str(self.session_id.clone())));
-        o.push(("started_ms".into(), JsonValue::Number(self.started_ms as f64)));
+        o.push((
+            "started_ms".into(),
+            JsonValue::Number(self.started_ms as f64),
+        ));
         o.push(("ended_ms".into(), JsonValue::Number(self.ended_ms as f64)));
         if let Some(m) = &self.model {
             o.push(("model".into(), JsonValue::Str(m.clone())));
@@ -257,10 +250,7 @@ impl SessionSummary {
             if let Some(d) = s.spectral_dimension {
                 sp.push(("spectral_dimension".into(), JsonValue::Number(d)));
             }
-            sp.push((
-                "anomaly_score".into(),
-                JsonValue::Number(s.anomaly_score),
-            ));
+            sp.push(("anomaly_score".into(), JsonValue::Number(s.anomaly_score)));
             sp.push((
                 "motif_matches".into(),
                 JsonValue::Array(

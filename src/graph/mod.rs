@@ -129,12 +129,10 @@ impl SessionGraph {
 }
 
 fn string_body(ev: &Event, key: &str) -> Option<String> {
-    ev.body
-        .get(key)
-        .and_then(|v| match v {
-            crate::json::JsonValue::Str(s) => Some(s.clone()),
-            _ => None,
-        })
+    ev.body.get(key).and_then(|v| match v {
+        crate::json::JsonValue::Str(s) => Some(s.clone()),
+        _ => None,
+    })
 }
 
 fn list_body(ev: &Event, key: &str) -> Vec<String> {

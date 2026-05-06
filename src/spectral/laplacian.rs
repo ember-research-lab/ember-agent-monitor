@@ -33,14 +33,17 @@ pub fn build_laplacian(adjacency: &[Vec<f64>], kind: LaplacianKind) -> Vec<Vec<f
     let mut w: Vec<Vec<f64>> = (0..n)
         .map(|i| {
             (0..n)
-                .map(|j| if i == j { 0.0 } else { adjacency[i][j].max(0.0) })
+                .map(|j| {
+                    if i == j {
+                        0.0
+                    } else {
+                        adjacency[i][j].max(0.0)
+                    }
+                })
                 .collect()
         })
         .collect();
-    let mut degrees: Vec<f64> = w
-        .iter()
-        .map(|row| row.iter().sum::<f64>())
-        .collect();
+    let mut degrees: Vec<f64> = w.iter().map(|row| row.iter().sum::<f64>()).collect();
     let eps = 1e-10;
     for d in degrees.iter_mut() {
         if *d == 0.0 {

@@ -37,10 +37,8 @@ impl EventSocket {
         });
         let me2 = std::sync::Arc::clone(&me);
         thread::spawn(move || {
-            for incoming in listener.incoming() {
-                if let Ok(stream) = incoming {
-                    me2.subscribers.lock().unwrap().push(stream);
-                }
+            for stream in listener.incoming().flatten() {
+                me2.subscribers.lock().unwrap().push(stream);
             }
         });
         Ok(me)

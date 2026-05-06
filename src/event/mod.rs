@@ -108,8 +108,8 @@ impl Event {
             .ok_or_else(|| format!("unknown trust_zone: {trust_zone_raw}"))?;
         let content_hash = string_field(obj, "content_hash")?;
         let kind_raw = string_field(obj, "kind")?;
-        let kind = EventKind::parse(&kind_raw)
-            .ok_or_else(|| format!("unknown event kind: {kind_raw}"))?;
+        let kind =
+            EventKind::parse(&kind_raw).ok_or_else(|| format!("unknown event kind: {kind_raw}"))?;
         let body = match find_field(obj, "body") {
             Some(JsonValue::Object(b)) => b.iter().cloned().collect(),
             Some(_) => return Err("body must be object".into()),
@@ -152,16 +152,21 @@ impl Event {
                 _ => None,
             })
             .ok_or_else(|| "missing field kind".to_string())?;
-        let kind = EventKind::parse(&kind_raw)
-            .ok_or_else(|| format!("unknown event kind: {kind_raw}"))?;
+        let kind =
+            EventKind::parse(&kind_raw).ok_or_else(|| format!("unknown event kind: {kind_raw}"))?;
 
         // Map Python field name conventions to ours.
         let mut body: HashMap<String, JsonValue> = HashMap::new();
         for (k, v) in obj {
             if matches!(
                 k.as_str(),
-                "kind" | "session_id" | "timestamp" | "trust_zone" | "event_id"
-                    | "parent_event_id" | "content_hash"
+                "kind"
+                    | "session_id"
+                    | "timestamp"
+                    | "trust_zone"
+                    | "event_id"
+                    | "parent_event_id"
+                    | "content_hash"
             ) {
                 continue;
             }
@@ -204,13 +209,13 @@ impl Event {
         id_buf.push_str(&content_hash);
         let event_id = hex_prefix(&crate::crypto::sha256::sha256(id_buf.as_bytes()), 16);
 
-        let parent_event_id = obj
-            .iter()
-            .find(|(k, _)| k == "parent_event_id")
-            .and_then(|(_, v)| match v {
-                JsonValue::Str(s) => Some(s.clone()),
-                _ => None,
-            });
+        let parent_event_id =
+            obj.iter()
+                .find(|(k, _)| k == "parent_event_id")
+                .and_then(|(_, v)| match v {
+                    JsonValue::Str(s) => Some(s.clone()),
+                    _ => None,
+                });
 
         Ok(Event {
             event_id,
@@ -284,7 +289,7 @@ fn parse_iso8601_ms(s: &str) -> Option<u64> {
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as i64; // [0, 399]
+    let yoe = y - era * 400; // [0, 399]
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146097 + doe - 719468
@@ -386,7 +391,12 @@ mod tests {
     fn deterministic_ids() {
         let mut body = HashMap::new();
         body.insert("k".into(), JsonValue::Number(1.0));
-        let e1 = Event::new("s", EventKind::ModelText, TrustZone::UserInput, body.clone());
+        let e1 = Event::new(
+            "s",
+            EventKind::ModelText,
+            TrustZone::UserInput,
+            body.clone(),
+        );
         let h1 = e1.content_hash.clone();
         let e2 = Event::new("s", EventKind::ModelText, TrustZone::UserInput, body);
         // content hash depends only on body, so should match

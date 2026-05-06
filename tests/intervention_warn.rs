@@ -59,7 +59,9 @@ fn warn_mode_injects_system_prompt_advisory() {
                         if trimmed.is_empty() {
                             break;
                         }
-                        if let Some(rest) = trimmed.to_ascii_lowercase().strip_prefix("content-length:") {
+                        if let Some(rest) =
+                            trimmed.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
                             content_length = rest.trim().parse().unwrap_or(0);
                         }
                     }
@@ -112,7 +114,9 @@ fn warn_mode_injects_system_prompt_advisory() {
         request_body.len()
     );
     client.write_all(req.as_bytes()).expect("send headers");
-    client.write_all(request_body.as_bytes()).expect("send body");
+    client
+        .write_all(request_body.as_bytes())
+        .expect("send body");
     client.flush().ok();
 
     let mut response = String::new();
@@ -152,8 +156,7 @@ fn warn_mode_injects_system_prompt_advisory() {
 
     // findings.jsonl recorded
     let findings_path = data_dir.join("findings/warn-test-1.jsonl");
-    let findings_content =
-        std::fs::read_to_string(&findings_path).expect("read findings");
+    let findings_content = std::fs::read_to_string(&findings_path).expect("read findings");
     assert!(
         findings_content.contains("sensitive_zone_access"),
         "expected finding recorded; got: {findings_content}"

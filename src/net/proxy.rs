@@ -18,7 +18,9 @@ use crate::proto::{parse_request as parse_anthropic, request_to_events};
 use crate::store::log::EventLogWriter;
 use crate::store::summary::{SessionSummary, SpectralSummary};
 use crate::store::Store;
-use crate::types::{DaemonConfig, EventKind, FidelityStatus, InterventionMode, Severity, TrustZone};
+use crate::types::{
+    DaemonConfig, EventKind, FidelityStatus, InterventionMode, Severity, TrustZone,
+};
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -49,14 +51,10 @@ impl ProxyContext {
         let store = Store::open(&config.data_dir)?;
         let mut detection = DetectionConfig::default();
         // Layer in user additions if present.
-        let user_sensitive = config
-            .data_dir
-            .join("state/user/sensitive.txt");
+        let user_sensitive = config.data_dir.join("state/user/sensitive.txt");
         let _ = detection.sensitive.load_additions(&user_sensitive);
         // User-calibrated spectral baseline overrides the shipped default.
-        let user_baseline = config
-            .data_dir
-            .join("state/user/spectral_baseline.json");
+        let user_baseline = config.data_dir.join("state/user/spectral_baseline.json");
         if let Ok(b) = crate::spectral::Baseline::load(&user_baseline) {
             detection.spectral_baseline = Some(b);
         }
@@ -72,12 +70,10 @@ impl ProxyContext {
 
     pub fn record(&self, event: &Event) {
         let mut writers = self.writers.lock().unwrap();
-        let writer = writers
-            .entry(event.session_id.clone())
-            .or_insert_with(|| {
-                let path = self.store.session_log_path(&event.session_id);
-                EventLogWriter::open(&path).expect("open event log")
-            });
+        let writer = writers.entry(event.session_id.clone()).or_insert_with(|| {
+            let path = self.store.session_log_path(&event.session_id);
+            EventLogWriter::open(&path).expect("open event log")
+        });
         let _ = writer.append(event);
     }
 
@@ -157,9 +153,7 @@ impl ProxyContext {
         // run it on every event. Triggered when event count is a multiple
         // of `spectral_cadence` AND we have at least 3 events.
         let n = graph.dynamic_graph.events.len();
-        if self.detection.spectral_cadence > 0
-            && n >= 3
-            && n % self.detection.spectral_cadence == 0
+        if self.detection.spectral_cadence > 0 && n >= 3 && n % self.detection.spectral_cadence == 0
         {
             findings.extend(crate::detect::run_spectral(graph, &self.detection));
         }
@@ -223,7 +217,7 @@ fn handle_connection(mut stream: TcpStream, ctx: Arc<ProxyContext>) {
         ("GET", "/health") | ("GET", "/status") => {
             HttpResponse::ok_json(br#"{"status":"ok","tool":"ember-agent-monitor"}"#.to_vec())
         }
-        ("POST", path) if path == "/v1/messages" => handle_messages(&req, &ctx),
+        ("POST", "/v1/messages") => handle_messages(&req, &ctx),
         _ => HttpResponse {
             status: 404,
             status_text: "Not Found".into(),
@@ -301,19 +295,19 @@ fn forward_and_intervene(
     };
 
     // Record response events and run dynamic detection.
-    let response_findings =
-        record_and_analyze_response(&response_body, session_id, ctx);
+    let response_findings = record_and_analyze_response(&response_body, session_id, ctx);
     let blocked: Vec<&Finding> = response_findings
         .iter()
         .filter(|f| matches!(f.severity, Severity::High | Severity::Critical))
         .collect();
 
     // Backward-direction intervention: strip dangerous tool_use blocks.
-    let final_body = if matches!(ctx.config.mode, InterventionMode::Warn | InterventionMode::Block)
-        && !blocked.is_empty()
+    let final_body = if matches!(
+        ctx.config.mode,
+        InterventionMode::Warn | InterventionMode::Block
+    ) && !blocked.is_empty()
     {
-        strip_tool_use_in_response(&response_body, &blocked)
-            .unwrap_or(response_body.clone())
+        strip_tool_use_in_response(&response_body, &blocked).unwrap_or(response_body.clone())
     } else {
         response_body
     };
@@ -370,17 +364,18 @@ fn inject_system_warning(body: &[u8], findings: &[Finding]) -> Option<Vec<u8>> {
     Some(crate::json::to_json_string(&JsonValue::Object(obj)).into_bytes())
 }
 
-fn strip_tool_use_in_response(
-    body: &[u8],
-    findings: &[&Finding],
-) -> Option<Vec<u8>> {
+fn strip_tool_use_in_response(body: &[u8], findings: &[&Finding]) -> Option<Vec<u8>> {
     let s = std::str::from_utf8(body).ok()?;
     let v = parse(s).ok()?;
     let mut obj = match v {
         JsonValue::Object(o) => o,
         _ => return None,
     };
-    let mut content_arr = match obj.iter().find(|(k, _)| k == "content").map(|(_, v)| v.clone()) {
+    let mut content_arr = match obj
+        .iter()
+        .find(|(k, _)| k == "content")
+        .map(|(_, v)| v.clone())
+    {
         Some(JsonValue::Array(a)) => a,
         _ => return None,
     };
@@ -416,11 +411,7 @@ fn strip_tool_use_in_response(
     Some(crate::json::to_json_string(&JsonValue::Object(obj)).into_bytes())
 }
 
-fn record_and_analyze_response(
-    body: &[u8],
-    session_id: &str,
-    ctx: &ProxyContext,
-) -> Vec<Finding> {
+fn record_and_analyze_response(body: &[u8], session_id: &str, ctx: &ProxyContext) -> Vec<Finding> {
     let mut findings = Vec::new();
     let s = match std::str::from_utf8(body) {
         Ok(s) => s,
@@ -554,7 +545,10 @@ fn read_findings(path: &std::path::Path) -> Vec<Finding> {
     out
 }
 
-fn derive_session_id(req: &HttpRequest, parsed: &Option<&crate::proto::AnthropicRequest>) -> String {
+fn derive_session_id(
+    req: &HttpRequest,
+    parsed: &Option<&crate::proto::AnthropicRequest>,
+) -> String {
     // Prefer the agent's explicit session header if present (Claude Code sets
     // x-claude-session-id on each turn). Fall back to a hash of the first
     // user message — same turn → same hash, which is good enough for the
@@ -607,7 +601,9 @@ fn forward_via_curl(
     cmd.stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("curl spawn: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(body).map_err(|e| format!("curl stdin: {e}"))?;
+        stdin
+            .write_all(body)
+            .map_err(|e| format!("curl stdin: {e}"))?;
     }
     let out = child
         .wait_with_output()
@@ -620,7 +616,11 @@ fn forward_via_curl(
 }
 
 fn which_curl() -> Result<String, String> {
-    for candidate in ["/usr/bin/curl", "/opt/homebrew/bin/curl", "/usr/local/bin/curl"] {
+    for candidate in [
+        "/usr/bin/curl",
+        "/opt/homebrew/bin/curl",
+        "/usr/local/bin/curl",
+    ] {
         if std::path::Path::new(candidate).exists() {
             return Ok(candidate.to_string());
         }

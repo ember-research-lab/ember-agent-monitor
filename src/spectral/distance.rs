@@ -77,9 +77,9 @@ pub fn davis_kahan_ratio(original: &[Vec<f64>], perturbed: &[Vec<f64>]) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::laplacian::{build_laplacian, LaplacianKind};
     use super::super::profile::SpectralProfile;
+    use super::*;
 
     fn build_profile(adj: &[Vec<f64>]) -> SpectralProfile {
         let l = build_laplacian(adj, LaplacianKind::NormalizedSymmetric);

@@ -86,12 +86,7 @@ fn compute_heat_trace(eigenvalues: &[f64], t_grid: &[f64]) -> Vec<f64> {
     }
     t_grid
         .iter()
-        .map(|&t| {
-            eigenvalues
-                .iter()
-                .map(|&lam| (-t * lam).exp())
-                .sum::<f64>()
-        })
+        .map(|&t| eigenvalues.iter().map(|&lam| (-t * lam).exp()).sum::<f64>())
         .collect()
 }
 

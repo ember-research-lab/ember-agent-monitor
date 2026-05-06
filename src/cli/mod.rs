@@ -34,7 +34,10 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
 }
 
 fn print_help() {
-    eprintln!("ember-agent {} — runtime observer for AI coding agents", env!("CARGO_PKG_VERSION"));
+    eprintln!(
+        "ember-agent {} — runtime observer for AI coding agents",
+        env!("CARGO_PKG_VERSION")
+    );
     eprintln!();
     eprintln!("USAGE:");
     eprintln!("  ember-agent <SUBCOMMAND> [OPTIONS]");
@@ -117,13 +120,10 @@ fn run_watcher(
                         // so the static graph (mcp_registration, hook_registration,
                         // skill_load, plugin_install) lands in the session log.
                         let mut writers = ctx.writers.lock().unwrap();
-                        let writer = writers
-                            .entry(ev.session_id.clone())
-                            .or_insert_with(|| {
-                                let p = ctx.store.session_log_path(&ev.session_id);
-                                crate::store::log::EventLogWriter::open(&p)
-                                    .expect("open event log")
-                            });
+                        let writer = writers.entry(ev.session_id.clone()).or_insert_with(|| {
+                            let p = ctx.store.session_log_path(&ev.session_id);
+                            crate::store::log::EventLogWriter::open(&p).expect("open event log")
+                        });
                         let _ = writer.append(&ev);
                     }
                 }
@@ -148,12 +148,19 @@ fn cmd_status(_args: Vec<String>) -> Result<u8, String> {
         (false, false) => "failed",
     };
     println!("ember-agent status:");
-    println!("  proxy:       {}", if proxy_alive { "running" } else { "down" });
+    println!(
+        "  proxy:       {}",
+        if proxy_alive { "running" } else { "down" }
+    );
     println!("  port:        {}", cfg.proxy_port);
     println!(
         "  watch_dir:   {} ({})",
         cfg.watch_dir.display(),
-        if watcher_dir_exists { "exists" } else { "missing" }
+        if watcher_dir_exists {
+            "exists"
+        } else {
+            "missing"
+        }
     );
     println!("  data_dir:    {}", cfg.data_dir.display());
     println!("  fidelity:    {fidelity}");
@@ -198,8 +205,7 @@ fn cmd_findings(args: Vec<String>) -> Result<u8, String> {
                 continue;
             }
         }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("read {path:?}: {e}"))?;
+        let content = std::fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
         let mut session_findings = 0;
         for line in content.lines() {
             if line.trim().is_empty() {
@@ -214,34 +220,32 @@ fn cmd_findings(args: Vec<String>) -> Result<u8, String> {
                 continue;
             }
             // Simple structured-line print; full JSON if --verbose later.
-            if let Ok(v) = crate::json::parse(line) {
-                if let crate::json::JsonValue::Object(o) = v {
-                    let t = o
-                        .iter()
-                        .find(|(k, _)| k == "type")
-                        .and_then(|(_, v)| match v {
-                            crate::json::JsonValue::Str(s) => Some(s.as_str()),
-                            _ => None,
-                        })
-                        .unwrap_or("?");
-                    let sev = o
-                        .iter()
-                        .find(|(k, _)| k == "severity")
-                        .and_then(|(_, v)| match v {
-                            crate::json::JsonValue::Str(s) => Some(s.as_str()),
-                            _ => None,
-                        })
-                        .unwrap_or("?");
-                    let why = o
-                        .iter()
-                        .find(|(k, _)| k == "rationale")
-                        .and_then(|(_, v)| match v {
-                            crate::json::JsonValue::Str(s) => Some(s.as_str()),
-                            _ => None,
-                        })
-                        .unwrap_or("");
-                    println!("  [{}] {} — {}", sev.to_uppercase(), t, why);
-                }
+            if let Ok(crate::json::JsonValue::Object(o)) = crate::json::parse(line) {
+                let t = o
+                    .iter()
+                    .find(|(k, _)| k == "type")
+                    .and_then(|(_, v)| match v {
+                        crate::json::JsonValue::Str(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("?");
+                let sev = o
+                    .iter()
+                    .find(|(k, _)| k == "severity")
+                    .and_then(|(_, v)| match v {
+                        crate::json::JsonValue::Str(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("?");
+                let why = o
+                    .iter()
+                    .find(|(k, _)| k == "rationale")
+                    .and_then(|(_, v)| match v {
+                        crate::json::JsonValue::Str(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("");
+                println!("  [{}] {} — {}", sev.to_uppercase(), t, why);
             }
         }
     }
@@ -279,7 +283,10 @@ fn cmd_calibrate(args: Vec<String>) -> Result<u8, String> {
     let fiedlers: Vec<f64> = profiles.iter().map(|p| p.fiedler_value).collect();
     let f_min = fiedlers.iter().copied().fold(f64::INFINITY, f64::min);
     let f_max = fiedlers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let dims: Vec<f64> = profiles.iter().filter_map(|p| p.spectral_dimension).collect();
+    let dims: Vec<f64> = profiles
+        .iter()
+        .filter_map(|p| p.spectral_dimension)
+        .collect();
     let (d_min, d_max) = if dims.is_empty() {
         (0.5, 4.0)
     } else {
@@ -307,9 +314,7 @@ fn cmd_calibrate(args: Vec<String>) -> Result<u8, String> {
     };
 
     let cfg = DaemonConfig::default();
-    let dest = cfg
-        .data_dir
-        .join("state/user/spectral_baseline.json");
+    let dest = cfg.data_dir.join("state/user/spectral_baseline.json");
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     }
@@ -424,7 +429,10 @@ fn normalized_heat_envelope(
         samples.push(theta / (p.n_nodes as f64).max(1.0));
     }
     if samples.is_empty() {
-        return crate::spectral::Envelope { low: 0.0, high: 1.0 };
+        return crate::spectral::Envelope {
+            low: 0.0,
+            high: 1.0,
+        };
     }
     let lo = samples.iter().copied().fold(f64::INFINITY, f64::min);
     let hi = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -435,9 +443,7 @@ fn normalized_heat_envelope(
 }
 
 fn cmd_replay(args: Vec<String>) -> Result<u8, String> {
-    let path = args
-        .first()
-        .ok_or("replay requires an events.jsonl path")?;
+    let path = args.first().ok_or("replay requires an events.jsonl path")?;
     let events = crate::store::log::read_all(std::path::Path::new(path))?;
     let mut graph = crate::graph::SessionGraph::default();
     let mut session_id = String::new();
@@ -451,11 +457,7 @@ fn cmd_replay(args: Vec<String>) -> Result<u8, String> {
     eprintln!("static graph:");
     eprintln!(
         "  mcp servers: {:?}",
-        graph
-            .static_graph
-            .mcp_servers
-            .keys()
-            .collect::<Vec<_>>()
+        graph.static_graph.mcp_servers.keys().collect::<Vec<_>>()
     );
     eprintln!("  tools: {} registered", graph.static_graph.tools.len());
     eprintln!(
@@ -491,7 +493,12 @@ fn cmd_replay(args: Vec<String>) -> Result<u8, String> {
     for sev in ["critical", "high", "medium", "low"] {
         if let Some(list) = by_severity.get(sev) {
             for f in list {
-                eprintln!("  [{}] {} ({})", sev.to_uppercase(), f.finding_type, f.scope.as_str());
+                eprintln!(
+                    "  [{}] {} ({})",
+                    sev.to_uppercase(),
+                    f.finding_type,
+                    f.scope.as_str()
+                );
                 if let Some(t) = &f.tool {
                     eprintln!("      tool: {t}");
                 }

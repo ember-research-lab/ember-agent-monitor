@@ -37,7 +37,7 @@ impl SensitiveSet {
                 h.join(".gnupg"),
                 h.join(".config/gh"),
                 h.join(".docker"),
-                h.join(".cursor"),    // CVE-2025-54135 mcp.json target
+                h.join(".cursor"), // CVE-2025-54135 mcp.json target
             ],
             component_names: vec![
                 ".ssh".into(),
@@ -45,8 +45,8 @@ impl SensitiveSet {
                 ".gnupg".into(),
                 ".gcp".into(),
                 ".kube".into(),
-                ".claude".into(),     // settings.json + skills + hooks live here
-                "hooks".into(),       // .git/hooks — CVE-2025-48384
+                ".claude".into(), // settings.json + skills + hooks live here
+                "hooks".into(),   // .git/hooks — CVE-2025-48384
             ],
             filename_prefixes: vec![".env".into()],
             filename_exact: vec![
@@ -56,9 +56,9 @@ impl SensitiveSet {
                 "id_ed25519".into(),
                 "id_dsa".into(),
                 "id_ecdsa".into(),
-                "config.json".into(), // Docker etc. — coarse but per spec
-                ".gitmodules".into(), // CVE-2025-48384 submodule poisoning
-                "mcp.json".into(),    // CurXecute (CVE-2025-54135)
+                "config.json".into(),      // Docker etc. — coarse but per spec
+                ".gitmodules".into(),      // CVE-2025-48384 submodule poisoning
+                "mcp.json".into(),         // CurXecute (CVE-2025-54135)
                 "mcp_servers.json".into(), // .claude variant
                 "settings.json".into(),    // .claude/settings.json (CVE-2025-59536)
             ],
