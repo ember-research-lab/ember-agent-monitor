@@ -1,0 +1,13 @@
+{
+  "fixture": "cyata_mcp_git_rce",
+  "expected_findings": [
+    {"type": "toxic_capability_composition", "scope": "static", "severity": "high"},
+    {"type": "sensitive_zone_access", "scope": "dynamic", "severity": "high"},
+    {"type": "sensitive_zone_access", "scope": "dynamic", "severity": "high"},
+    {"type": "sensitive_zone_access", "scope": "dynamic", "severity": "high"},
+    {"type": "argument_injection_pattern", "scope": "dynamic", "severity": "high"},
+    {"type": "instruction_shape_in_tool_result", "scope": "dynamic", "severity": "medium"},
+    {"type": "instruction_shape_in_tool_result", "scope": "dynamic", "severity": "medium"},
+    {"type": "instruction_shape_in_tool_result", "scope": "dynamic", "severity": "medium"}
+  ]
+}

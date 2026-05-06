@@ -1,0 +1,8 @@
+{
+  "fixture": "plugin_composition_collusion",
+  "_note": "A single plugin install brings in MCP + hook + subagent simultaneously. high_risk_plugin_composition fires HIGH on the static graph. Spectral also notices the bundled-registration shape.",
+  "expected_findings": [
+    {"type": "high_risk_plugin_composition", "scope": "static", "severity": "high"},
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

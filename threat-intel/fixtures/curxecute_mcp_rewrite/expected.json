@@ -1,0 +1,21 @@
+{
+  "_note": "CVE-2025-54135: Slack/external content drives an mcp.json rewrite. sensitive_zone_access fires on ~/.cursor/mcp.json (now in default sensitive set), instruction_shape_in_tool_result on the malicious content, spectral on the shape.",
+  "expected_findings": [
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "instruction_shape_in_tool_result",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "spectral_motif_match",
+      "scope": "static",
+      "severity": "medium"
+    }
+  ],
+  "fixture": "curxecute_mcp_rewrite"
+}

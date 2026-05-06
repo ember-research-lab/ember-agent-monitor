@@ -1,0 +1,7 @@
+{
+  "fixture": "classifier_disagreement_safe",
+  "_note": "Auto-mode classifier emitted 'safe' verdict, but ember-agent's own detection had a high-severity finding in the same window. classifier_disagreement fires MEDIUM as a calibration signal.",
+  "expected_findings": [
+    {"type": "classifier_disagreement", "scope": "dynamic", "severity": "medium"}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "fixture": "mcpoison_description_injection",
+  "_note": "Two HIGH instruction_shape_in_mcp_description findings (one per malicious registration, the primary signal for this attack class) plus one MEDIUM spectral_motif_match — the v2 layer also notices that the session graph shape resembles an exfil pipeline. Both findings are correct independent signals.",
+  "expected_findings": [
+    {"type": "instruction_shape_in_mcp_description", "scope": "static", "severity": "high"},
+    {"type": "instruction_shape_in_mcp_description", "scope": "static", "severity": "high"},
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

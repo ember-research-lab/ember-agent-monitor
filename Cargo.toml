@@ -1,0 +1,34 @@
+[package]
+name = "ember-agent-monitor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Zero-dependency runtime observer for AI coding agents"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ember-research-lab/ember-agent-monitor"
+readme = "design/README.md"
+keywords = ["security", "ai-safety", "agent", "proxy"]
+categories = ["command-line-utilities", "development-tools"]
+publish = false
+
+[[bin]]
+name = "ember-agent"
+path = "src/main.rs"
+
+[lib]
+name = "ember_agent_monitor"
+path = "src/lib.rs"
+
+# ember-agent-monitor compiles with ZERO external crate dependencies by design.
+# Matches vetpkg's posture: every primitive is auditable in this repo, no
+# system libraries linked at runtime, no dependency on the wider ecosystem
+# for security-critical paths. See design/agent-monitor-spec.md §10.
+[dependencies]
+
+[dev-dependencies]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

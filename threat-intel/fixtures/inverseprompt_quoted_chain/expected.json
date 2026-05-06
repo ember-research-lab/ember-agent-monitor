@@ -1,0 +1,11 @@
+{
+  "_note": "CVE-2025-54795: semicolon-chained command inside an approved tool's quoted argument. argument_injection_pattern's extended matcher (now covers && and || too) catches it.",
+  "expected_findings": [
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    }
+  ],
+  "fixture": "inverseprompt_quoted_chain"
+}
