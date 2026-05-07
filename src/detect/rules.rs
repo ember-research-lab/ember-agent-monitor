@@ -261,6 +261,123 @@ pub fn sensitive_zone_access(event: &Event, cfg: &super::DetectionConfig, out: &
     }
 }
 
+/// v1.5 #2: webhook_destination_arg. Scans tool_call URL arguments for
+/// hosts in a curated exfil block-list (Discord/Slack incoming webhooks,
+/// paste sites, anonymous file hosts, request bins, tunnel services).
+///
+/// Mirrors the network-layer `webhook_destination` rule but at the
+/// API-proxy boundary: catches the attempt before bytes leave. The
+/// network tool's version catches subprocess-spawned exfil that bypasses
+/// the proxy — both layers fire and the user sees the layered detection.
+///
+/// Severity: HIGH. Block-list hits are not legitimate workflow noise.
+pub fn webhook_destination_arg(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolCall {
+        return;
+    }
+    let tool = string_from_body(event, "tool_name").unwrap_or_default();
+    let input = match event.body.get("input") {
+        Some(JsonValue::Object(o)) => o.clone(),
+        _ => return,
+    };
+    for (k, v) in &input {
+        let url = match v {
+            JsonValue::Str(s) => s.clone(),
+            _ => continue,
+        };
+        let host = match extract_url_host(&url) {
+            Some(h) => h,
+            None => continue,
+        };
+        let label = match webhook_blocklist_match(&host) {
+            Some(l) => l,
+            None => continue,
+        };
+        let score = PATTERN_HIT_WEIGHT * Severity::High.weight();
+        out.push(Finding {
+            finding_type: "webhook_destination_arg".into(),
+            scope: FindingScope::Dynamic,
+            severity: Severity::High,
+            session_id: event.session_id.clone(),
+            event_id: Some(event.event_id.clone()),
+            tool: Some(tool.clone()),
+            argument: Some(k.clone()),
+            matched_value: Some(url.clone()),
+            pattern: Some(label.into()),
+            trust_zone: None,
+            rationale: format!(
+                "tool_call to {tool} with {k} pointing at {host} matches the curated \
+                 webhook/exfil block-list ({label}). Destinations on this list have no \
+                 reasonable use-case in an agent's data plane — high-confidence exfil \
+                 indicator at the API-proxy boundary."
+            ),
+            score,
+        });
+    }
+}
+
+fn extract_url_host(url: &str) -> Option<String> {
+    let after_scheme = if let Some(rest) = url.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = url.strip_prefix("http://") {
+        rest
+    } else {
+        return None;
+    };
+    let host = after_scheme.split(['/', '?', ':', '#']).next()?;
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_lowercase())
+    }
+}
+
+/// Block-list mirror of network's WebhookBlocklist. We don't share the
+/// type (loose-coupling discipline — no shared library) but the entries
+/// are kept in lock-step. Updates land in both crates' threat-intel
+/// CHANGELOGs.
+fn webhook_blocklist_match(host: &str) -> Option<&'static str> {
+    const EXACT: &[(&str, &str)] = &[
+        ("pastebin.com", "paste-site"),
+        ("paste.ee", "paste-site"),
+        ("dpaste.com", "paste-site"),
+        ("hastebin.com", "paste-site"),
+        ("transfer.sh", "anonymous-file-host"),
+        ("ix.io", "paste-site"),
+        ("0x0.st", "anonymous-file-host"),
+        ("file.io", "anonymous-file-host"),
+        ("anonfiles.com", "anonymous-file-host"),
+        ("bashupload.com", "anonymous-file-host"),
+        ("requestbin.com", "request-bin"),
+        ("webhook.site", "request-bin"),
+        ("pipedream.com", "request-bin"),
+        ("ngrok.io", "tunnel"),
+        ("localtunnel.me", "tunnel"),
+        ("ngrok-free.app", "tunnel"),
+        ("hooks.slack.com", "slack-incoming-webhook"),
+        ("api.telegram.org", "telegram-bot-api"),
+    ];
+    const SUFFIXES: &[(&str, &str)] = &[
+        (".discord.com", "discord-webhook"),
+        (".discordapp.com", "discord-webhook"),
+        (".ngrok.io", "tunnel"),
+        (".ngrok-free.app", "tunnel"),
+        (".ngrok.app", "tunnel"),
+        (".gist.github.com", "github-gist"),
+    ];
+    for (h, label) in EXACT {
+        if host == *h {
+            return Some(*label);
+        }
+    }
+    for (suffix, label) in SUFFIXES {
+        if host.ends_with(suffix) || host == suffix.trim_start_matches('.') {
+            return Some(*label);
+        }
+    }
+    None
+}
+
 /// Spec §4: argument_injection_pattern. Scans every string-typed value in
 /// the tool_call input map against the argument-injection pattern list.
 pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {

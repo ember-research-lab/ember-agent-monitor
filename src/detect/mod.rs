@@ -80,6 +80,7 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::instruction_shape_in_mcp_description(event, &mut out);
     rules::trigger_cause_violation(event, graph, &mut out);
     rules::classifier_disagreement(event, graph, &mut out);
+    rules::webhook_destination_arg(event, &mut out);
     out.retain(|f| f.score >= cfg.min_score);
     out
 }
