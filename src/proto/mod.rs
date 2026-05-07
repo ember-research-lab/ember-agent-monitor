@@ -38,6 +38,10 @@ pub enum ContentBlock {
         tool_use_id: String,
         content: String,
         is_error: bool,
+        /// Non-text content block types observed in this result (e.g.
+        /// "image", "audio", "document"). Empty if the result was
+        /// text-only. Drives the multimodal injection rule (v1.5 #4).
+        media_types: Vec<String>,
     },
     Other(String), // e.g. image, document — type name preserved
 }
@@ -188,10 +192,12 @@ fn parse_block(v: &JsonValue) -> Option<ContentBlock> {
                 .map(|(_, v)| v.clone())
                 .unwrap_or(JsonValue::Str(String::new()));
             let content = stringify_tool_result_content(&content_raw);
+            let media_types = extract_media_types(&content_raw);
             Some(ContentBlock::ToolResult {
                 tool_use_id,
                 content,
                 is_error,
+                media_types,
             })
         }
         other => Some(ContentBlock::Other(other.to_string())),
@@ -217,6 +223,29 @@ fn stringify_tool_result_content(v: &JsonValue) -> String {
         }
         _ => String::new(),
     }
+}
+
+/// Walk a tool_result content payload and return any non-text media types
+/// it contains: `image`, `audio`, `document`, etc. Multimodal content
+/// arriving in a tool_result is a structurally distinct trust surface —
+/// the model can be influenced by image text (typographic prompt
+/// injection) or sub-audible audio that the developer's terminal will
+/// never render. v1.5 #4 fires `multimodal_in_tool_result` on hits.
+pub fn extract_media_types(v: &JsonValue) -> Vec<String> {
+    let mut out = Vec::new();
+    if let JsonValue::Array(arr) = v {
+        for b in arr {
+            if let JsonValue::Object(o) = b {
+                if let Some((_, JsonValue::Str(t))) = o.iter().find(|(k, _)| k == "type") {
+                    match t.as_str() {
+                        "text" => continue,
+                        other => out.push(other.to_string()),
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn string_field(obj: &[(String, JsonValue)], key: &str) -> Option<String> {
@@ -267,11 +296,23 @@ pub fn request_to_events(req: &AnthropicRequest, session_id: &str) -> Vec<Event>
                     tool_use_id,
                     content,
                     is_error,
+                    media_types,
                 } => {
                     let mut body = HashMap::new();
                     body.insert("tool_use_id".into(), JsonValue::Str(tool_use_id.clone()));
                     body.insert("content".into(), JsonValue::Str(content.clone()));
                     body.insert("is_error".into(), JsonValue::Bool(*is_error));
+                    if !media_types.is_empty() {
+                        body.insert(
+                            "media_types".into(),
+                            JsonValue::Array(
+                                media_types
+                                    .iter()
+                                    .map(|s| JsonValue::Str(s.clone()))
+                                    .collect(),
+                            ),
+                        );
+                    }
                     // tool_result is ALWAYS untrusted_tool_output — this is the
                     // schema-disambiguation invariant from spec §3.
                     events.push(Event::new(

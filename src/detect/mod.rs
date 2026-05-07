@@ -81,6 +81,7 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::trigger_cause_violation(event, graph, &mut out);
     rules::classifier_disagreement(event, graph, &mut out);
     rules::webhook_destination_arg(event, &mut out);
+    rules::multimodal_in_tool_result(event, &mut out);
     out.retain(|f| f.score >= cfg.min_score);
     out
 }
