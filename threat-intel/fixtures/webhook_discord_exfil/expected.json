@@ -1,0 +1,8 @@
+{
+  "fixture": "webhook_discord_exfil",
+  "_note": "Agent fetches a Discord webhook URL — exact match in the curated block-list. webhook_destination_arg fires HIGH at the API-proxy boundary. Spectral picks up the small-graph shape too.",
+  "expected_findings": [
+    {"type": "webhook_destination_arg", "scope": "dynamic", "severity": "high"},
+    {"type": "spectral_anomaly", "scope": "static", "severity": "medium"}
+  ]
+}
