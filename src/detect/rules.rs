@@ -317,13 +317,9 @@ pub fn webhook_destination_arg(event: &Event, out: &mut Vec<Finding>) {
 }
 
 fn extract_url_host(url: &str) -> Option<String> {
-    let after_scheme = if let Some(rest) = url.strip_prefix("https://") {
-        rest
-    } else if let Some(rest) = url.strip_prefix("http://") {
-        rest
-    } else {
-        return None;
-    };
+    let after_scheme = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
     let host = after_scheme.split(['/', '?', ':', '#']).next()?;
     if host.is_empty() {
         None
