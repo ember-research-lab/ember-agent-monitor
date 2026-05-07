@@ -156,7 +156,7 @@ fn warn_mode_injects_system_prompt_advisory() {
 
     // findings.jsonl recorded
     let findings_path = data_dir.join("findings/warn-test-1.jsonl");
-    let findings_content = std::fs::read_to_string(&findings_path).expect("read findings");
+    let findings_content = std::fs::read_to_string(findings_path).expect("read findings");
     assert!(
         findings_content.contains("sensitive_zone_access"),
         "expected finding recorded; got: {findings_content}"

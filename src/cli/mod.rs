@@ -165,12 +165,12 @@ fn cmd_status(_args: Vec<String>) -> Result<u8, String> {
     println!("  data_dir:    {}", cfg.data_dir.display());
     println!("  fidelity:    {fidelity}");
     let sessions_dir = cfg.data_dir.join("sessions");
-    let session_count = std::fs::read_dir(&sessions_dir)
+    let session_count = std::fs::read_dir(sessions_dir)
         .map(|d| d.flatten().count())
         .unwrap_or(0);
     println!("  sessions:    {session_count}");
     let findings_dir = cfg.data_dir.join("findings");
-    let findings_count = std::fs::read_dir(&findings_dir)
+    let findings_count = std::fs::read_dir(findings_dir)
         .map(|d| d.flatten().count())
         .unwrap_or(0);
     println!("  with_findings: {findings_count}");
@@ -192,7 +192,7 @@ fn cmd_findings(args: Vec<String>) -> Result<u8, String> {
         }
     }
     let dir = cfg.data_dir.join("findings");
-    let entries = std::fs::read_dir(&dir).map_err(|e| format!("read findings dir: {e}"))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("read findings dir: {e}"))?;
     let mut total = 0usize;
     for entry in entries.flatten() {
         let path = entry.path();
