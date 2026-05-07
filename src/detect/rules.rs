@@ -487,6 +487,84 @@ pub fn trigger_cause_violation(event: &Event, graph: &SessionGraph, out: &mut Ve
     }
 }
 
+/// v1.5 #5: subagent_via_injection (control-flow hijacking across
+/// subagents — CFH). When a subagent is invoked (Task / orchestrator
+/// MCP tools) and its causal ancestor is in `untrusted_tool_output`,
+/// the orchestrator's plan was influenced by injected content.
+///
+/// Distinct from cross-session `cross_orchestrator_lineage` (persistent
+/// layer): this is the within-session analog. A poisoned researcher
+/// subagent emits a result that gets a writer subagent spawned in the
+/// same session, by the same orchestrator, but the spawn was caused by
+/// the researcher's output rather than the user's request.
+///
+/// Detection mirrors `trigger_cause_violation` but with subagent tools
+/// as the trigger event class (instead of skill_load / hook_registration).
+pub fn subagent_via_injection(event: &Event, graph: &SessionGraph, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolCall {
+        return;
+    }
+    let tool = string_from_body(event, "tool_name").unwrap_or_default();
+    if !is_subagent_tool_name(&tool) {
+        return;
+    }
+    let ancestors = graph.dynamic_graph.ancestors(&event.event_id);
+    if ancestors.is_empty() {
+        return;
+    }
+    for parent_id in &ancestors {
+        let parent_event = graph
+            .dynamic_graph
+            .events
+            .iter()
+            .find(|e| e.event_id == *parent_id);
+        if let Some(parent) = parent_event {
+            if parent.trust_zone == TrustZone::UntrustedToolOutput {
+                let score = PATTERN_HIT_WEIGHT
+                    * TrustZone::UntrustedToolOutput.inverse_trust()
+                    * Severity::High.weight();
+                out.push(Finding {
+                    finding_type: "subagent_via_injection".into(),
+                    scope: FindingScope::Dynamic,
+                    severity: Severity::High,
+                    session_id: event.session_id.clone(),
+                    event_id: Some(event.event_id.clone()),
+                    tool: Some(tool.clone()),
+                    argument: None,
+                    matched_value: None,
+                    pattern: None,
+                    trust_zone: Some(TrustZone::UntrustedToolOutput),
+                    rationale: format!(
+                        "subagent invocation ({tool}) has an ancestor in \
+                         untrusted_tool_output (parent_event_id={parent_id}). The \
+                         orchestrator's plan to spawn this subagent traces to injected \
+                         content, not user input — control-flow hijacking across \
+                         subagents (CFH). Distinct from cross_orchestrator_lineage \
+                         which catches the cross-session variant of the same shape."
+                    ),
+                    score,
+                });
+                return;
+            }
+        }
+    }
+}
+
+/// Subagent-spawning tool names. Mirrors persistent's
+/// rules::cross_orchestrator::SUBAGENT_TOOLS list. Updates land in
+/// both crates' threat-intel CHANGELOGs.
+fn is_subagent_tool_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "task"
+            | "mcp__orchestrator__send_message"
+            | "mcp__orchestrator__spawn_agent"
+            | "mcp__send_message"
+            | "spawn_agent"
+    )
+}
+
 /// MCPoison-class: tool descriptions registered via MCP can carry hidden
 /// instructions that influence the agent (CVE-2025-54136 and family).
 /// Same pattern matcher as instruction_shape_in_tool_result, but applies
