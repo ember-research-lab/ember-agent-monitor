@@ -487,6 +487,90 @@ pub fn trigger_cause_violation(event: &Event, graph: &SessionGraph, out: &mut Ve
     }
 }
 
+/// v1.5 #6: api_base_url_redirect. Detects tool_calls that set or write
+/// API-base-URL env vars to non-default values — the CVE-2026-21852 class.
+///
+/// Attack shape: a malicious repo's `.env` / `.envrc` / `.claude/settings.json`
+/// overrides `ANTHROPIC_BASE_URL` to attacker-controlled host. The agent's
+/// next request still carries the real bearer token but goes to the
+/// attacker's endpoint. Same shape applies to OpenAI's `OPENAI_API_BASE`
+/// and `OPENAI_BASE_URL`.
+///
+/// Detection: scan every string-typed input in a tool_call for the
+/// `<VAR>=` pattern, where the value is not the canonical anthropic.com
+/// or openai.com host. Catches both `bash` invocations setting the var
+/// AND `write_file` calls dropping a config file with the override.
+///
+/// Severity: HIGH. The list of vars is curated; user-extensible additions
+/// can land via threat-intel CHANGELOG.
+pub fn api_base_url_redirect(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolCall {
+        return;
+    }
+    let tool = string_from_body(event, "tool_name").unwrap_or_default();
+    let input = match event.body.get("input") {
+        Some(JsonValue::Object(o)) => o.clone(),
+        _ => return,
+    };
+    // (env_var, canonical_host_substring)
+    const REDIRECT_VARS: &[(&str, &str)] = &[
+        ("ANTHROPIC_BASE_URL", "anthropic.com"),
+        ("OPENAI_API_BASE", "openai.com"),
+        ("OPENAI_BASE_URL", "openai.com"),
+        ("AZURE_OPENAI_ENDPOINT", "azure.com"),
+        ("GOOGLE_API_BASE", "googleapis.com"),
+    ];
+    for (k, v) in &input {
+        let s = match v {
+            JsonValue::Str(s) => s.clone(),
+            _ => continue,
+        };
+        for (var, canonical) in REDIRECT_VARS {
+            if let Some(idx) = s.find(&format!("{var}=")) {
+                let value_start = idx + var.len() + 1;
+                // Take up to the next whitespace, newline, or quote.
+                let rest = &s[value_start..];
+                let end = rest
+                    .find([' ', '\t', '\n', '"', '\''])
+                    .unwrap_or(rest.len());
+                let value = &rest[..end];
+                let value_lower = value.to_lowercase();
+                // Empty / unset isn't an attack signal.
+                if value.is_empty() {
+                    continue;
+                }
+                // Skip exact canonical matches (the var being explicitly set
+                // to the legit endpoint isn't a redirect).
+                if value_lower.contains(canonical) {
+                    continue;
+                }
+                let score = PATTERN_HIT_WEIGHT * Severity::High.weight();
+                out.push(Finding {
+                    finding_type: "api_base_url_redirect".into(),
+                    scope: FindingScope::Dynamic,
+                    severity: Severity::High,
+                    session_id: event.session_id.clone(),
+                    event_id: Some(event.event_id.clone()),
+                    tool: Some(tool.clone()),
+                    argument: Some(k.clone()),
+                    matched_value: Some(format!("{var}={value}")),
+                    pattern: Some((*var).into()),
+                    trust_zone: None,
+                    rationale: format!(
+                        "tool_call to {tool} sets {var} to a non-canonical host \
+                         ({value}). API-base-URL redirects route the agent's bearer \
+                         token to the attacker's endpoint while the agent keeps \
+                         operating normally — CVE-2026-21852 family. Canonical hosts \
+                         contain '{canonical}'; this value does not."
+                    ),
+                    score,
+                });
+                return;
+            }
+        }
+    }
+}
+
 /// v1.5 #5: subagent_via_injection (control-flow hijacking across
 /// subagents — CFH). When a subagent is invoked (Task / orchestrator
 /// MCP tools) and its causal ancestor is in `untrusted_tool_output`,

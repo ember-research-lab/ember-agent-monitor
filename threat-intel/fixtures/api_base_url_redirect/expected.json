@@ -1,0 +1,7 @@
+{
+  "fixture": "api_base_url_redirect",
+  "_note": "Bash tool_call sets ANTHROPIC_BASE_URL to an attacker-controlled host. api_base_url_redirect fires HIGH per CVE-2026-21852 family.",
+  "expected_findings": [
+    {"type": "api_base_url_redirect", "scope": "dynamic", "severity": "high"}
+  ]
+}
