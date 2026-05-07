@@ -84,6 +84,8 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::multimodal_in_tool_result(event, &mut out);
     rules::subagent_via_injection(event, graph, &mut out);
     rules::api_base_url_redirect(event, &mut out);
+    rules::sandbox_escape_pattern(event, &mut out);
+    rules::auto_approve_write_via_injection(event, graph, &mut out);
     out.retain(|f| f.score >= cfg.min_score);
     out
 }
