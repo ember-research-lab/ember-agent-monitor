@@ -89,11 +89,13 @@ fn warn_mode_injects_system_prompt_advisory() {
     // -- Proxy in warn mode --
     let data_dir = std::env::temp_dir().join(format!("eam-warn-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
-    let mut cfg = DaemonConfig::default();
-    cfg.proxy_port = pick_free_port();
-    cfg.mode = InterventionMode::Warn;
-    cfg.data_dir = data_dir.clone();
-    cfg.upstream_anthropic = upstream_url;
+    let cfg = DaemonConfig {
+        proxy_port: pick_free_port(),
+        mode: InterventionMode::Warn,
+        data_dir: data_dir.clone(),
+        upstream_anthropic: upstream_url,
+        ..DaemonConfig::default()
+    };
 
     let ctx = Arc::new(ProxyContext::new(cfg.clone()).expect("ctx"));
     let stop = Arc::new(AtomicBool::new(false));

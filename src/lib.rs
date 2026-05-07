@@ -15,6 +15,7 @@
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::vec_init_then_push)]
 #![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::field_reassign_with_default)]
 
 pub mod cli;
 pub mod crypto;
