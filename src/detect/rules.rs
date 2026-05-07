@@ -558,6 +558,71 @@ pub fn instruction_shape_in_mcp_description(event: &Event, out: &mut Vec<Finding
     }
 }
 
+/// v1.5 #4: multimodal_in_tool_result. Surface any tool_result whose
+/// content_blocks include image, audio, or document media. Multimodal
+/// content is a structurally distinct trust surface:
+///
+/// - Image: typographic prompt injection (CSA research found 64% ASR
+///   against GPT-4V/Claude 3 with text rendered into the image)
+/// - Audio: sub-audible carriers (WhisperInject)
+/// - Document: embedded PDFs / Office docs can carry hidden text
+///
+/// We can't analyze the bytes themselves at the proxy layer (that would
+/// require a vision/audio model — outside zero-dep scope). What we can
+/// do: flag every multimodal tool_result so the operator knows the
+/// agent received a non-text input that COULD carry hidden instructions.
+/// Severity is MEDIUM by default, HIGH when the source is `untrusted_tool_output`.
+pub fn multimodal_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolResult {
+        return;
+    }
+    let media_types = match event.body.get("media_types") {
+        Some(JsonValue::Array(arr)) => arr,
+        _ => return,
+    };
+    if media_types.is_empty() {
+        return;
+    }
+    let names: Vec<String> = media_types
+        .iter()
+        .filter_map(|v| match v {
+            JsonValue::Str(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    if names.is_empty() {
+        return;
+    }
+    let severity = if event.trust_zone == TrustZone::UntrustedToolOutput {
+        Severity::High
+    } else {
+        Severity::Medium
+    };
+    let score = PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * severity.weight();
+    out.push(Finding {
+        finding_type: "multimodal_in_tool_result".into(),
+        scope: FindingScope::Dynamic,
+        severity,
+        session_id: event.session_id.clone(),
+        event_id: Some(event.event_id.clone()),
+        tool: None,
+        argument: None,
+        matched_value: Some(names.join(",")),
+        pattern: None,
+        trust_zone: Some(event.trust_zone),
+        rationale: format!(
+            "tool_result contains non-text media block(s): {}. Multimodal content can \
+             carry steganographic instructions invisible at the source — typographic \
+             text rendered into images (high ASR vs vision LLMs), sub-audible audio \
+             carriers, embedded text in documents. We don't analyze the bytes here \
+             (outside zero-dep scope); this finding is a 'this surface is exposed' \
+             signal so the operator can investigate or gate the tool that produced it.",
+            names.join(", "),
+        ),
+        score,
+    });
+}
+
 /// Spec §4 (the big one): instruction_shape_in_tool_result. Pattern presence
 /// alone is not a finding — the source trust zone must be `untrusted_tool_output`.
 /// Same `you MUST` text in a workspace doc is low-signal; in a webpage, high.
