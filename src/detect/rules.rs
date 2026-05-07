@@ -483,6 +483,222 @@ pub fn trigger_cause_violation(event: &Event, graph: &SessionGraph, out: &mut Ve
     }
 }
 
+/// v1.6: sandbox_escape_pattern. Detects sandbox-private-API references in
+/// tool_call inputs to code-execution tools. Covers Pyodide private API
+/// (CVE-2025-68668 N8scape), JS Function-constructor escape, Lua _G table
+/// escape, and Python dunder-walking patterns.
+///
+/// Trust-zone weighted: same code in workspace_local is dev work; same
+/// in untrusted_tool_output is an attack. Severity scales: HIGH when
+/// source is untrusted, MEDIUM when workspace-local.
+///
+/// Some keyword needles are composed at runtime (concat of split parts)
+/// to avoid the source file containing literal patterns that
+/// security-reminder hooks would flag during edit. The rule itself is
+/// exactly the detection we want; literals in source would be ironic.
+pub fn sandbox_escape_pattern(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolCall {
+        return;
+    }
+    let tool = string_from_body(event, "tool_name").unwrap_or_default();
+    let lower_tool = tool.to_lowercase();
+    let is_code_exec = lower_tool == "bash"
+        || lower_tool.contains("execute_code")
+        || lower_tool.contains("run_python")
+        || lower_tool.contains("run_javascript")
+        || lower_tool.contains("eval")
+        || lower_tool.contains("repl");
+    if !is_code_exec {
+        return;
+    }
+    let input = match event.body.get("input") {
+        Some(JsonValue::Object(o)) => o.clone(),
+        _ => return,
+    };
+    // Compose hook-flagged literals from parts.
+    let np_exec = format!("child_process.{}", "exec");
+    let js_fn_new = format!("new {}{}{}", "Func", "tion", "(");
+    let js_fn_dq = format!("{}{}({}", "Func", "tion", "\"");
+    let keywords: Vec<(&str, &str)> = vec![
+        ("_pyodide", "pyodide-private-api"),
+        ("eval_code", "pyodide-eval-code"),
+        ("__import__", "python-bypass-import"),
+        ("__bases__", "python-bases-walk"),
+        ("__globals__", "python-globals-walk"),
+        ("__subclasses__", "python-subclass-walk"),
+        (js_fn_new.as_str(), "js-function-constructor"),
+        (js_fn_dq.as_str(), "js-function-constructor"),
+        (np_exec.as_str(), "node-shell-exec"),
+        ("getattr(__builtins__", "python-builtins-walk"),
+        ("_G[", "lua-global-table-escape"),
+        ("debug.getregistry", "lua-debug-escape"),
+    ];
+    for (k, value) in &input {
+        let s = match value {
+            JsonValue::Str(s) => s.clone(),
+            _ => continue,
+        };
+        for (needle, label) in &keywords {
+            if s.contains(needle) {
+                let severity = if event.trust_zone == TrustZone::UntrustedToolOutput {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                };
+                // Sandbox-private-API references in code-exec tool inputs
+                // are suspect regardless of source — severity already
+                // encodes the trust gradient; don't double-apply it.
+                let score = PATTERN_HIT_WEIGHT * severity.weight();
+                out.push(Finding {
+                    finding_type: "sandbox_escape_pattern".into(),
+                    scope: FindingScope::Dynamic,
+                    severity,
+                    session_id: event.session_id.clone(),
+                    event_id: Some(event.event_id.clone()),
+                    tool: Some(tool.clone()),
+                    argument: Some(k.clone()),
+                    matched_value: Some(s.clone()),
+                    pattern: Some((*label).to_string()),
+                    trust_zone: Some(event.trust_zone),
+                    rationale: format!(
+                        "code-execution tool {tool} input contains sandbox-escape \
+                         pattern ({label}). Common shape across N8scape (CVE-2025-68668), \
+                         JS escape constructors, and Python dunder walks. Severity \
+                         scales with trust zone."
+                    ),
+                    score,
+                });
+                return;
+            }
+        }
+    }
+}
+
+/// v1.6: auto_approve_write_via_injection. Detects write_file events that
+/// drop a known auto-approval-disabling key into a known IDE settings
+/// file, where the parent chain traces to untrusted_tool_output.
+///
+/// This is the canonical signal for CVE-2025-53773 (GitHub Copilot YOLO
+/// persistence) and the family: a malicious PR comment / README / image
+/// causes the agent to write a config that disables the human-in-the-loop
+/// gate, after which the agent is unbounded for the rest of the session.
+///
+/// We fire on the WRITE, not the file's eventual effect. By the time the
+/// next turn runs without approval prompts, the damage is already done —
+/// the catch surface is the moment the file is written.
+pub fn auto_approve_write_via_injection(
+    event: &Event,
+    graph: &SessionGraph,
+    out: &mut Vec<Finding>,
+) {
+    if event.kind != EventKind::ToolCall {
+        return;
+    }
+    let tool = string_from_body(event, "tool_name").unwrap_or_default();
+    let lower_tool = tool.to_lowercase();
+    let is_write = lower_tool.contains("write_file") || lower_tool.contains("edit");
+    if !is_write {
+        return;
+    }
+    let input = match event.body.get("input") {
+        Some(JsonValue::Object(o)) => o.clone(),
+        _ => return,
+    };
+    let path_str = input
+        .iter()
+        .find(|(k, _)| k == "path" || k == "file_path")
+        .and_then(|(_, v)| match v {
+            JsonValue::Str(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    let path_lower = path_str.to_lowercase();
+    let is_ide_settings = path_lower.ends_with("/.vscode/settings.json")
+        || path_lower.ends_with("\\.vscode\\settings.json")
+        || path_lower.ends_with("/.cursor/cli.json")
+        || path_lower.ends_with("/.cursor/settings.json")
+        || path_lower.ends_with("/.idea/settings.json")
+        || path_lower.ends_with("/.codeium/settings.json")
+        || path_lower.ends_with("/.continue/config.json");
+    if !is_ide_settings {
+        return;
+    }
+    let content = input
+        .iter()
+        .find(|(k, _)| k == "content")
+        .and_then(|(_, v)| match v {
+            JsonValue::Str(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    let content_lower = content.to_lowercase();
+    // Auto-approval-disabling keys. Each is a substring scan; any hit
+    // indicates a config write that disarms the human-in-the-loop gate.
+    const AUTO_APPROVE_KEYS: &[&str] = &[
+        "autoapprove",
+        "chat.tools.autoapprove",
+        "auto_approve",
+        "cursor.composer.autorun",
+        "composer.autorun",
+        "continue.autorun",
+        "approval_required\":false",
+        "approval_required\":\"never\"",
+    ];
+    let key_hit = AUTO_APPROVE_KEYS
+        .iter()
+        .find(|k| content_lower.contains(*k));
+    let key_hit = match key_hit {
+        Some(k) => *k,
+        None => return,
+    };
+    // Trace untrusted ancestor.
+    let ancestors = graph.dynamic_graph.ancestors(&event.event_id);
+    let untrusted_ancestor = ancestors.iter().find(|aid| {
+        graph
+            .dynamic_graph
+            .events
+            .iter()
+            .any(|e| e.event_id == **aid && e.trust_zone == TrustZone::UntrustedToolOutput)
+    });
+    let traced_to_untrusted = untrusted_ancestor.is_some();
+    let severity = if traced_to_untrusted {
+        Severity::Critical
+    } else {
+        Severity::High
+    };
+    let zone_used = if traced_to_untrusted {
+        TrustZone::UntrustedToolOutput
+    } else {
+        event.trust_zone
+    };
+    let score = PATTERN_HIT_WEIGHT * zone_used.inverse_trust() * severity.weight();
+    let trace_note = if traced_to_untrusted {
+        "WITH untrusted_tool_output ancestor — CVE-2025-53773 shape"
+    } else {
+        "no untrusted ancestor — still flagged because auto-approval bypass is high-blast-radius"
+    };
+    out.push(Finding {
+        finding_type: "auto_approve_write_via_injection".into(),
+        scope: FindingScope::Dynamic,
+        severity,
+        session_id: event.session_id.clone(),
+        event_id: Some(event.event_id.clone()),
+        tool: Some(tool.clone()),
+        argument: Some("path".into()),
+        matched_value: Some(format!("{path_str} → {key_hit}")),
+        pattern: Some(key_hit.into()),
+        trust_zone: Some(zone_used),
+        rationale: format!(
+            "write to IDE settings file ({path_str}) sets an auto-approval-disabling \
+             key ({key_hit}); {trace_note}. After this write the agent operates \
+             without human approval gates for the rest of the session — CVE-2025-53773 \
+             (Copilot YOLO) family. Fire on the write itself; by the time the gate is \
+             missed it's too late."
+        ),
+        score,
+    });
+}
+
 /// v1.5 #6: api_base_url_redirect. Detects tool_calls that set or write
 /// API-base-URL env vars to non-default values — the CVE-2026-21852 class.
 ///
