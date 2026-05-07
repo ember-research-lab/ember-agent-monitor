@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::all)]
+// Some allows below name lints that were added after rustc 1.75 (our MSRV).
+// Without `unknown_lints` allowed, 1.75 turns the unknown-name into a hard
+// error; allowing it lets the same source compile cleanly on stable AND 1.75.
+#![allow(unknown_lints)]
 // Stylistic lints we've decided don't fit this codebase:
 //   - `needless_range_loop`: matrix-algebra code (jacobi, laplacian) uses
 //     explicit `for i in 0..n { for j in 0..n }` indexing; that's the

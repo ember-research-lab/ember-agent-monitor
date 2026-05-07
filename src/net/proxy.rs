@@ -496,7 +496,7 @@ fn string_field(obj: &[(String, JsonValue)], key: &str) -> Option<String> {
 }
 
 fn read_findings(path: &std::path::Path) -> Vec<Finding> {
-    use crate::detect::{Finding, FindingScope};
+    use crate::detect::FindingScope;
     let text = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
