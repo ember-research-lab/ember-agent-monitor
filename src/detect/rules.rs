@@ -1035,6 +1035,59 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     }
 }
 
+/// Agent-as-trusted-intermediary social engineering — the ClickFix attack
+/// class. Distinct from `instruction_shape_in_tool_result` (which targets
+/// the *model*). ClickFix targets the *user*, using the agent as a delivery
+/// channel: a tool-result containing instructions like "open Terminal and
+/// run X" or a base64-encoded shell payload. The agent presents these as
+/// legitimate setup steps; user trust in the agent bypasses the user's own
+/// scrutiny.
+///
+/// Patterns are conservatively scoped to high-confidence shapes that
+/// essentially never appear in legitimate retrieved documentation
+/// (`patterns::clickfix_patterns`). Severity HIGH because user-side
+/// execution bypasses the agent's guardrails entirely.
+///
+/// Sources: ClawHavoc / ClickFix campaign (Koi Security Feb 2 2026,
+/// BulwarkAI Feb 26 2026), Acronis HF skills (May 1 2026), corpus
+/// extension §3.1.
+pub fn agent_as_intermediary_clickfix(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolResult {
+        return;
+    }
+    if event.trust_zone != TrustZone::UntrustedToolOutput {
+        return;
+    }
+    let content = string_from_body(event, "content")
+        .or_else(|| string_from_body(event, "content_preview"))
+        .unwrap_or_default();
+    if content.is_empty() {
+        return;
+    }
+    for (_label, matcher) in patterns::clickfix_patterns() {
+        if let Some(label) = matcher(&content) {
+            let score =
+                PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * Severity::High.weight();
+            out.push(Finding {
+                finding_type: "agent_as_intermediary_clickfix".into(),
+                scope: FindingScope::Dynamic,
+                severity: Severity::High,
+                session_id: event.session_id.clone(),
+                event_id: Some(event.event_id.clone()),
+                tool: None,
+                argument: None,
+                matched_value: None,
+                pattern: Some(label.into()),
+                trust_zone: Some(event.trust_zone),
+                rationale:
+                    "Untrusted tool output contains user-targeted social-engineering script (ClickFix shape)"
+                        .into(),
+                score,
+            });
+        }
+    }
+}
+
 fn looks_path_like(s: &str) -> bool {
     s.contains('/') || s.contains('~') || s.contains('\\')
 }

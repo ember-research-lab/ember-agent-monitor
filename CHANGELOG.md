@@ -9,6 +9,19 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Added
+- **`agent_as_intermediary_clickfix` rule (severity HIGH).** New attack
+  class per corpus extension §3.1: tool-result content socially
+  engineers the *user* (via the agent) rather than injecting the model.
+  Conservative pattern set for v1.5: `base64-decode-to-shell`,
+  `powershell-iex-download`, `powershell-encoded-command` (with ≥8-char
+  payload check), `open-terminal-and-run` (proximity-windowed match
+  for "open <shell>" + "and run/paste/enter"). `curl ... | sh` is
+  intentionally NOT in v1.5 — too many legit installers ship that
+  pattern; tracked for v1.6 with a destination-allowlist
+  discriminator. New fixture `clawhavoc_clickfix_jan2026` pins
+  2× HIGH findings + 2× spectral signals against a malicious skill
+  metadata sample modelled from Koi Security / BulwarkAI / Trend Micro
+  Feb 2026 disclosures.
 - **Model-agnostic protocol layer.** `proto::Protocol` enum routes by URL
   path (`/v1/messages` → Anthropic; `/openai/v1/chat/completions` and
   `/openai/v1/responses` → OpenAI). All detection rules and spectral
