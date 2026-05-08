@@ -115,30 +115,51 @@ This is not a marketing position. It is the architecture that follows from takin
 
 ## 3. Coverage matrix
 
-How the four tools collectively address the threat surface:
+How the four tools — plus the bash-glue attest layer (`ATTEST.md`) —
+collectively address the threat surface:
 
-| Attack class | vetpkg | Agent monitor | Persistent | Network |
-|---|---|---|---|---|
-| Malicious package at install | **Yes** | (advisory only) | — | — |
-| Typosquat package | **Yes** | — | — | — |
-| Package CVE post-disclosure | **Yes** | — | — | — |
-| Package zero-day | (gap) | (gap if no runtime sig) | — | **Yes (egress)** |
-| Tool poisoning (MCP description) | (advisory) | **Yes** | — | — |
-| Prompt injection (poisoned tool result) | — | **Yes** | — | — |
-| Capability composition attack | (advisory) | **Yes** | — | — |
-| Sensitive-zone access | — | **Yes** | — | — |
-| Argument injection | — | **Yes** | — | — |
-| Scope escape | — | **Yes** | — | — |
-| Hook configuration attack | — | **Yes (static)** | — | — |
-| Hook runtime behavior | — | (gap) | (partial via fingerprint) | **Yes (egress)** |
-| Single-session credential exfil | — | **Yes** | — | **Yes** |
-| Multi-session staged exfil | — | (gap) | **Yes** | **Yes (egress)** |
-| Boundary loss via compaction | — | (per-session only) | **Yes (cross-session)** | — |
-| Distributed lethal trifecta | — | (per-session only) | **Yes (cross-session)** | **Yes** |
-| DNS-based exfiltration | — | — | — | **Yes** |
-| Adaptive attacker (rule-tuned) | — | (v2 spectral) | (graph methods) | **Yes (egress signature)** |
+| Attack class | vetpkg | Agent monitor | Persistent | Network | Attest |
+|---|---|---|---|---|---|
+| Malicious package at install | **Yes** | (advisory only) | — | — | — |
+| Typosquat package | **Yes** | — | — | — | — |
+| Package CVE post-disclosure | **Yes** | — | — | — | — |
+| Package zero-day | (gap) | (gap if no runtime sig) | — | **Yes (egress)** | — |
+| Tool poisoning (MCP description, direct) | (advisory) | **Yes** | — | — | — |
+| MCP marketplace poisoning | **Yes (manifest types)** | **Yes (handshake injection)** | — | — | — |
+| Prompt injection (poisoned tool result) | — | **Yes** | — | — | — |
+| **Agent-as-intermediary social engineering (ClickFix)** | — | **Yes** (`agent_as_intermediary_clickfix` HIGH, v1.5) | (cross-session repeat) | — | (process tree, if user runs payload) |
+| **Memory poisoning of identity files** (SOUL.md, MEMORY.md, etc.) | — | **Yes** (`frozen_file_modification` HIGH, v1.5 hash-pin) | **Yes (behavior-change lineage)** | — | **Yes (auditd file write)** |
+| **CLI-flag coercion** (`--dangerously-skip-permissions`, `--yolo`, etc.) | — | **Yes** (CLI invocation shape) | — | — | **Yes (process tree)** |
+| Capability composition attack | (advisory) | **Yes** | — | — | — |
+| Sensitive-zone access | — | **Yes** | — | — | — |
+| Argument injection | — | **Yes** | — | — | — |
+| Scope escape | — | **Yes** | — | — | — |
+| Hook configuration attack | — | **Yes (static)** | — | — | (auditd) |
+| Hook runtime behavior | — | (gap) | (partial via fingerprint) | **Yes (egress)** | — |
+| Single-session credential exfil | — | **Yes** | — | **Yes** | — |
+| Multi-session staged exfil | — | (gap) | **Yes** | **Yes (egress)** | — |
+| Boundary loss via compaction | — | (per-session only) | **Yes (cross-session)** | — | — |
+| Distributed lethal trifecta | — | (per-session only) | **Yes (cross-session)** | **Yes** | — |
+| DNS-based exfiltration | — | — | — | **Yes** | — |
+| **LLM-runtime malware** (off-agent inference, e.g. LAMEHUG) | — | (gap — malware isn't an agent) | — | **Yes** (`uncorrelated_egress` to inference endpoint) | (process tree on .pif/PyInstaller) |
+| **LLMO / AI-targeted supply chain** (PromptMink-style) | **Yes (burn-and-replace pattern, layered architecture)** | — | — | — | — |
+| **Slopsquatting** (LLM-hallucinated package names) | **Yes (name-similarity + LLM-suggestion-distance)** | — | — | — | — |
+| **Protocol confusion** (Anthropic/OpenAI body-path mismatch) | — | **Yes** (`protocol_mismatch_attempt` MEDIUM, v1.5) | — | — | — |
+| Adaptive attacker (rule-tuned) | — | (v2 spectral) | (graph methods) | **Yes (egress signature)** | — |
+| Canary token exfiltration→use | — | — | — | — | **Yes (CRITICAL)** |
+| Process attestation (unexpected children, integrity bit clear) | — | — | — | — | **Yes** |
+
+**Bolded rows** are new attack classes added since the v1 corpus
+analysis, sourced from the corpus extension §3 (May 2026 review of
+real-world incidents: ClawHavoc, ClickFix, LAMEHUG, PromptMink,
+PhantomRaven, s1ngularity Nx, Vidar variants targeting OpenClaw
+identity files, etc.).
 
 The "gap" entries are honest. No tool tries to claim every box. The pattern that matters: every attack class has at least one tool that catches it, and most have two or more for redundancy. **Layer-orthogonal coverage** — defeating one layer's defense doesn't help with the others, because each tool watches different signal.
+
+The Attest column is bash-glue today per `ATTEST.md`; promotion to a
+fifth Rust binary (`ember-attest`) is gated on the four criteria in
+ATTEST.md §5 after a 60-day production window.
 
 ---
 
