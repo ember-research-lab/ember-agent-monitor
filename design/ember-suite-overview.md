@@ -8,6 +8,8 @@
 
 AI security tooling has converged on a flawed pattern: every vendor pitches a single product as the answer. Lakera, Protect AI, Robust Intelligence, Snyk, Datadog — each ships one product covering one slice and claims to be enough. They are not. AI agents fail across multiple structural layers, and any single-product defense has correlated failure modes within its own layer.
 
+A second, related, claim: defense should be **vendor-independent by construction**. The threat surface (prompt injection, supply-chain compromise, multi-session staged exfil, wire-level egress) does not change between Claude, GPT, Gemini, or a local Llama. Tools that bake an Anthropic-or-OpenAI-shaped assumption into their substrate are committing to a calibration debt that grows with every new vendor. Ember tools observe at the *Event* layer — a shared internal type emitted by every protocol parser — and detection rules don't see protocol shapes at all. Adding a new vendor is one new file under `src/proto/`, no rule or fixture changes.
+
 Ember's position is the opposite. **Defense in depth requires multiple independent tools at structurally different layers.** No single Ember tool tries to be the answer. Each does its layer well and integrates with the others through explicit, loose-coupling interfaces. Together they cover the surface; individually they are honest about scope.
 
 This is not a marketing position. It is the architecture that follows from taking the threat model seriously. Prompt injection, tool poisoning, supply chain attacks, and exfiltration all happen at different layers of the agent execution stack, and each layer has different observability, different intervention semantics, and different failure modes. A unified product would have to compromise on all of them. Four focused tools do not.
@@ -234,6 +236,10 @@ The honest version of this argument is: a single product cannot solve AI securit
 - Persistent tool design + early implementation
 - Integration: agent monitor session graphs → persistent
 - Documented persistent threat model
+- **Hash-pinned file integrity** in agent-monitor: `--integrity-manifest` flag emits `frozen_file_modification` findings on drift. New rule, no new tool.
+- **`ember-suite-status` CLI roll-up**: small bash script that walks `~/.ember/*/findings.jsonl` across the four tools + ATTEST glue and prints a one-screen summary. Operator-facing quick-checkin path that delays the need for a real dashboard. Signal `status` command in the presence-agent runbook delegates to this.
+- **Presence-agent dogfood deploy** (see `ember-research-lab/ember-presence`): the lab's social-presence agent becomes the suite's first production user. Calibration window of ≥30 days informs which spectral motifs need re-baselining for routine heartbeat traffic.
+- **`ember-attest` decision point** at +60 days from presence-agent deploy: bash glue from `ATTEST.md` either earns promotion to a fifth tool against published criteria, or stays bash. No speculative Rust port before the criteria fire.
 
 ### Mid (v2 of suite)
 
