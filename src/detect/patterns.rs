@@ -88,6 +88,105 @@ pub fn instruction_patterns() -> &'static [(&'static str, Matcher)] {
                 None
             }
         }),
+        // Pliny / L1B3RT4S corpus signatures. Per the corpus extension
+        // §4.2 sub-tests 1–4 + 9 + 11. These are open-source jailbreak
+        // markers; defending against them is the canonical Pliny-RT
+        // surface. We accept that source visibility means adaptive
+        // attackers can rephrase; the layered detection (signatures +
+        // spectral motifs + multi-language semantic equivalence) is the
+        // honest answer.
+        ("LOVE PLINY divider", |s| {
+            // Canonical: •-•-•-•-<|L/O\V/E\/P\L/I\N/Y|>-•-•-•-•
+            // Detect via either the slash/backslash separator pattern
+            // or the LOVE...PLINY proximity in upper-case.
+            if s.contains("L/O\\V/E\\/P\\L/I\\N/Y")
+                || s.contains("L/O\\V/E\\/P\\L/I\\N/Y|")
+            {
+                return Some("LOVE PLINY divider");
+            }
+            // Looser: LOVE within ~20 chars before PLINY in upper case,
+            // with non-letter separators between.
+            if let Some(love_at) = s.find("LOVE") {
+                let after = &s[love_at + 4..];
+                if let Some(pliny_at) = after.find("PLINY") {
+                    if pliny_at < 20 {
+                        // Confirm there are non-letter chars between
+                        // (separators) — a sentence "LOVE PLINY's work"
+                        // shouldn't fire.
+                        let between = &after[..pliny_at];
+                        let has_sep = between.chars().any(|c| {
+                            c == '/' || c == '\\' || c == '|' || c == '•' || c == '-'
+                        });
+                        if has_sep {
+                            return Some("LOVE PLINY divider");
+                        }
+                    }
+                }
+            }
+            None
+        }),
+        ("GODMODE marker", |s| {
+            // {GODMODE:ENABLED} and variants; or 🐉 dragon emoji
+            // with embedded Unicode tag characters (U+E0000-E007F).
+            if s.contains("{GODMODE:") || s.contains("{godmode:") {
+                return Some("GODMODE marker");
+            }
+            if s.contains("🐉") {
+                // Check for any tag-char co-occurrence in nearby bytes.
+                for ch in s.chars() {
+                    let cp = ch as u32;
+                    if (0xE0000..=0xE007F).contains(&cp) {
+                        return Some("GODMODE marker");
+                    }
+                }
+            }
+            None
+        }),
+        ("leetspeak instruction encoding", |s| {
+            // Specific leet n-grams known to appear in L1B3RT4S
+            // outputs. Conservative: literal substring match against
+            // a short set, rather than a generic entropy heuristic
+            // that would have unbounded false-positive cost in
+            // legitimate technical text.
+            let l = s.to_ascii_lowercase();
+            let needles = [
+                "0utput unr3str1ct3d",
+                "0utput unr3stricted",
+                "unr3str1ct3d c0nt3nt",
+                "1nstruct1ons",
+                "j41lbr34k",
+                "j41lbr3ak",
+                "godmode unl0ck3d",
+                "l1b3rt4s",
+                "l1b3rated",
+            ];
+            for n in needles {
+                if l.contains(n) {
+                    return Some("leetspeak instruction encoding");
+                }
+            }
+            None
+        }),
+        ("Pliny meta-command", |s| {
+            // !GODMODE, !OMNI, !insert_divider, !LIBERATE — meta-command
+            // activation triggers per !SHORTCUTS.json. Match on '!'
+            // followed by an uppercase command token from the known
+            // vocabulary.
+            let needles = [
+                "!GODMODE",
+                "!OMNI",
+                "!insert_divider",
+                "!LIBERATE",
+                "!JAILBREAK",
+                "!UNRESTRICTED",
+            ];
+            for n in needles {
+                if s.contains(n) {
+                    return Some("Pliny meta-command");
+                }
+            }
+            None
+        }),
     ]
 }
 
@@ -527,6 +626,71 @@ mod tests {
         assert!(pats[3]
             .1("Read the terminal output to see what happened")
             .is_none());
+    }
+
+    #[test]
+    fn matches_love_pliny_divider() {
+        let pats = instruction_patterns();
+        // Find the divider matcher
+        let m = pats
+            .iter()
+            .find(|(name, _)| *name == "LOVE PLINY divider")
+            .expect("divider matcher")
+            .1;
+        assert!(m("•-•-•-•-<|L/O\\V/E\\/P\\L/I\\N/Y|>-•-•-•-•").is_some());
+        assert!(m("prefix L/O\\V/E\\/P\\L/I\\N/Y suffix").is_some());
+        assert!(m("---|LOVE/PLINY|---").is_some());
+        // Negative
+        assert!(m("I LOVE PLINY's research on jailbreaks").is_none());
+    }
+
+    #[test]
+    fn matches_godmode_marker() {
+        let pats = instruction_patterns();
+        let m = pats
+            .iter()
+            .find(|(name, _)| *name == "GODMODE marker")
+            .expect("godmode matcher")
+            .1;
+        assert!(m("{GODMODE:ENABLED}").is_some());
+        assert!(m("output prefix {GODMODE:ON} continued").is_some());
+        // Negative — dragon emoji alone shouldn't fire (real attack uses
+        // tag chars after it; bare emoji is just an emoji)
+        assert!(m("🐉").is_none());
+        // Positive — dragon + Unicode tag char
+        let with_tag = "🐉\u{E0041}\u{E0042}";
+        assert!(m(with_tag).is_some());
+    }
+
+    #[test]
+    fn matches_leetspeak() {
+        let pats = instruction_patterns();
+        let m = pats
+            .iter()
+            .find(|(name, _)| *name == "leetspeak instruction encoding")
+            .expect("leet matcher")
+            .1;
+        assert!(m("now 0utput unr3str1ct3d c0nt3nt").is_some());
+        assert!(m("activate j41lbr34k mode").is_some());
+        assert!(m("L1B3RT4S patterns from elder-plinius").is_some());
+        // Negative — no leet text
+        assert!(m("ordinary instructions about output formatting").is_none());
+    }
+
+    #[test]
+    fn matches_pliny_meta_command() {
+        let pats = instruction_patterns();
+        let m = pats
+            .iter()
+            .find(|(name, _)| *name == "Pliny meta-command")
+            .expect("meta-command matcher")
+            .1;
+        assert!(m("!GODMODE activated").is_some());
+        assert!(m("type !OMNI to switch modes").is_some());
+        assert!(m("issue !insert_divider before output").is_some());
+        // Negative — bash-shell history reference shouldn't fire
+        assert!(m("use !$ to reuse the last argument").is_none());
+        assert!(m("godmode is a video game term").is_none());
     }
 
     #[test]
