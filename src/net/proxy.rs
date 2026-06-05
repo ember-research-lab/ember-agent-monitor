@@ -656,7 +656,8 @@ fn derive_session_id_for(req: &HttpRequest, body: &[u8], protocol: Protocol) -> 
 
     // 2. Hash of the first user message text — same turn → same hash.
     let first_user_text = match protocol {
-        Protocol::Anthropic => {
+        Protocol::Anthropic =>
+        {
             #[allow(deprecated)]
             anthropic::parse_request(body).ok().and_then(|p| {
                 p.messages.first().and_then(|m| {

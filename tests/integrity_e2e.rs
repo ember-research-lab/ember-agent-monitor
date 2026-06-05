@@ -116,8 +116,13 @@ fn frozen_workspace_tamper_fires_high() {
     //    This confirms the rule is per-file, not session-wide.
     let still_ok_count = post
         .iter()
-        .filter(|fi| fi.argument.as_deref().unwrap_or("").ends_with("IDENTITY.md")
-            || fi.argument.as_deref().unwrap_or("").ends_with("TOOLS.md"))
+        .filter(|fi| {
+            fi.argument
+                .as_deref()
+                .unwrap_or("")
+                .ends_with("IDENTITY.md")
+                || fi.argument.as_deref().unwrap_or("").ends_with("TOOLS.md")
+        })
         .count();
     assert_eq!(still_ok_count, 0, "untampered files should not fire");
 

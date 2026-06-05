@@ -118,8 +118,9 @@ impl Protocol {
         match self {
             Protocol::Anthropic => anthropic::parse_request(body)
                 .map(|req| anthropic::request_to_events(&req, session_id)),
-            Protocol::OpenAI => openai::parse_request(body)
-                .map(|req| openai::request_to_events(&req, session_id)),
+            Protocol::OpenAI => {
+                openai::parse_request(body).map(|req| openai::request_to_events(&req, session_id))
+            }
         }
     }
 
@@ -140,14 +141,19 @@ impl Protocol {
             crate::json::JsonValue::Object(o) => o,
             _ => return None,
         };
-        let has_anthropic_marker = obj.iter().any(|(k, _)| {
-            k == "anthropic_version" || k == "anthropic_beta"
-        }) || obj.iter().any(|(k, v)| {
-            k == "model" && matches!(v, crate::json::JsonValue::Str(s) if s.starts_with("claude"))
-        });
+        let has_anthropic_marker = obj
+            .iter()
+            .any(|(k, _)| k == "anthropic_version" || k == "anthropic_beta")
+            || obj.iter().any(|(k, v)| {
+                k == "model"
+                    && matches!(v, crate::json::JsonValue::Str(s) if s.starts_with("claude"))
+            });
         let has_openai_marker = obj.iter().any(|(k, _)| {
-            k == "frequency_penalty" || k == "presence_penalty" || k == "logit_bias"
-                || k == "n" || k == "response_format"
+            k == "frequency_penalty"
+                || k == "presence_penalty"
+                || k == "logit_bias"
+                || k == "n"
+                || k == "response_format"
         }) || obj.iter().any(|(k, v)| {
             k == "model"
                 && matches!(v, crate::json::JsonValue::Str(s)
@@ -184,7 +190,10 @@ mod tests {
 
     #[test]
     fn for_path_anthropic() {
-        assert_eq!(Protocol::for_path("/v1/messages"), Some(Protocol::Anthropic));
+        assert_eq!(
+            Protocol::for_path("/v1/messages"),
+            Some(Protocol::Anthropic)
+        );
     }
 
     #[test]
@@ -268,4 +277,3 @@ mod tests {
         );
     }
 }
-

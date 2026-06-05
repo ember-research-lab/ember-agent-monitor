@@ -109,7 +109,9 @@ fn openai_path_forwards_with_prefix_stripped() {
         request_body.len()
     );
     client.write_all(req.as_bytes()).expect("send headers");
-    client.write_all(request_body.as_bytes()).expect("send body");
+    client
+        .write_all(request_body.as_bytes())
+        .expect("send body");
     client.flush().ok();
     let mut response = String::new();
     client.read_to_string(&mut response).expect("read response");
@@ -122,7 +124,9 @@ fn openai_path_forwards_with_prefix_stripped() {
     // Assertion 1: upstream saw the prefix-stripped path.
     let paths = received_paths.lock().unwrap();
     assert!(
-        paths.iter().any(|p| p.contains("/v1/chat/completions") && !p.contains("/openai/")),
+        paths
+            .iter()
+            .any(|p| p.contains("/v1/chat/completions") && !p.contains("/openai/")),
         "expected upstream to receive /v1/chat/completions (no /openai prefix), got: {paths:?}"
     );
 
@@ -187,7 +191,9 @@ fn protocol_mismatch_fires_finding() {
         request_body.len()
     );
     client.write_all(req.as_bytes()).expect("send headers");
-    client.write_all(request_body.as_bytes()).expect("send body");
+    client
+        .write_all(request_body.as_bytes())
+        .expect("send body");
     client.flush().ok();
     let mut response = String::new();
     let _ = client.read_to_string(&mut response);

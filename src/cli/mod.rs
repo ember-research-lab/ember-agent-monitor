@@ -47,7 +47,9 @@ fn print_help() {
     eprintln!("  daemon [--mode M] [--port P] [--data-dir D] [--integrity-manifest F]");
     eprintln!("         [--upstream-anthropic URL] [--upstream-openai URL]");
     eprintln!("                       Run proxy + file-watcher (M = observe|warn|block).");
-    eprintln!("                       Routes /v1/messages → Anthropic, /openai/v1/* → OpenAI-compat.");
+    eprintln!(
+        "                       Routes /v1/messages → Anthropic, /openai/v1/* → OpenAI-compat."
+    );
     eprintln!("                       --integrity-manifest enables hash-pinned file checks.");
     eprintln!("  status               Show daemon health and fidelity status");
     eprintln!("  findings [--session S]");
@@ -91,7 +93,8 @@ fn cmd_daemon(args: Vec<String>) -> Result<u8, String> {
                 cfg.integrity_manifest = Some(PathBuf::from(v));
             }
             "--upstream-anthropic" => {
-                cfg.upstream_anthropic = iter.next().ok_or("--upstream-anthropic requires a URL")?;
+                cfg.upstream_anthropic =
+                    iter.next().ok_or("--upstream-anthropic requires a URL")?;
             }
             "--upstream-openai" => {
                 cfg.upstream_openai = iter.next().ok_or("--upstream-openai requires a URL")?;
