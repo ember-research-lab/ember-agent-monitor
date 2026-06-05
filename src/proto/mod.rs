@@ -1,371 +1,279 @@
-//! Anthropic Messages API protocol parser.
+//! Protocol abstraction for agent-monitor.
 //!
-//! Spec §3 ("Critical schema discipline"): `tool_result` is structurally
-//! distinct from `user_prompt` even though both arrive as `role: user` in
-//! Anthropic's wire format. We disambiguate at parse time here, never
-//! downstream. Each `messages[i].content` block is inspected for its `type`
-//! field — `tool_use`, `tool_result`, `text`, `image`, etc. — and the
-//! corresponding event kind is emitted.
+//! agent-monitor proxies LLM API traffic from any vendor that speaks one
+//! of the supported protocols. Detection rules + spectral analysis
+//! operate on the shared `Event` type emitted by every parser, so the
+//! framework is vendor-independent by construction — adding a new
+//! vendor = adding a new parser file, with no rule or fixture changes.
+//!
+//! # Supported protocols (v1.5)
+//!
+//! | Protocol | Path prefix | Vendors |
+//! |---|---|---|
+//! | `Anthropic` | `/v1/...` | Anthropic, AWS Bedrock with Claude |
+//! | `OpenAI` (Chat Completions) | `/openai/v1/...` | OpenAI, Codex, Gemini via `/v1beta/openai/`, xAI Grok, Mistral, Together, Fireworks, Groq, Azure OpenAI, Ollama, llama.cpp |
+//!
+//! Together this covers ~95% of the commercial + local-model ecosystem.
+//! Cohere native and Gemini native are deferred until someone shows up
+//! needing them — adding either is one new file under `src/proto/`.
+//!
+//! # Routing model
+//!
+//! Path-prefix routing: the URL deterministically picks the protocol.
+//! Auto-detection by body shape was rejected because protocol-confusion
+//! attacks (a body that parses as both Anthropic and OpenAI but with
+//! different effective semantics) become controllable by the attacker.
+//! Path-prefix puts the choice in a single deterministic place under
+//! operator control via client config.
+//!
+//! Path-prefix isn't free of attack surface either — an attacker who
+//! mismatches body and path can probe for parser confusion. We catch
+//! that with the `protocol_mismatch_attempt` rule, which fires when the
+//! body shape disagrees with the path's protocol. Routing stays
+//! deterministic; probing becomes observable.
+//!
+//! # Adding a new protocol
+//!
+//! 1. Create `src/proto/<name>.rs` with `parse_request` /
+//!    `parse_response` returning a `Vec<Event>`.
+//! 2. Add a variant to `Protocol`.
+//! 3. Add the path prefix to `Protocol::for_path` and the upstream
+//!    config key to `DaemonConfig::upstream_for`.
+//! 4. Implement intervention helpers (`inject_advisory`, `strip_dangerous`,
+//!    `refusal_response`).
+//! 5. Add a fixture under `threat-intel/fixtures/` exercising a
+//!    representative tool-use sequence in the new protocol.
+//!
+//! All existing rules apply to the new parser's emitted events
+//! automatically. No rule changes required.
+
+pub mod anthropic;
+pub mod openai;
 
 use crate::event::Event;
-use crate::json::{parse, JsonValue};
-use crate::types::{EventKind, TrustZone};
-use std::collections::HashMap;
 
-/// Parsed Anthropic request: messages array + system prompt + model.
-#[derive(Debug, Clone)]
-pub struct AnthropicRequest {
-    pub model: Option<String>,
-    pub system_prompt: Option<String>,
-    pub messages: Vec<Message>,
+/// The set of vendor protocols agent-monitor's proxy can dispatch.
+///
+/// Closed enum on purpose: every supported protocol is shipped, audited,
+/// and fixture-tested. Adding a new variant is a deliberate code change,
+/// not a runtime plugin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Protocol {
+    Anthropic,
+    OpenAI,
 }
 
-#[derive(Debug, Clone)]
-pub struct Message {
-    pub role: String,
-    pub blocks: Vec<ContentBlock>,
-}
+impl Protocol {
+    /// Stable string id for telemetry and config keys.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Protocol::Anthropic => "anthropic",
+            Protocol::OpenAI => "openai",
+        }
+    }
 
-#[derive(Debug, Clone)]
-pub enum ContentBlock {
-    Text(String),
-    ToolUse {
-        id: String,
-        name: String,
-        input: JsonValue,
-    },
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-        is_error: bool,
-        /// Non-text content block types observed in this result (e.g.
-        /// "image", "audio", "document"). Empty if the result was
-        /// text-only. Drives the multimodal injection rule (v1.5 #4).
-        media_types: Vec<String>,
-    },
-    Other(String), // e.g. image, document — type name preserved
-}
+    /// Resolve a request path to its protocol, if any.
+    ///
+    /// Anthropic owns `/v1/...` (its canonical Messages API path).
+    /// OpenAI traffic is namespaced under `/openai/v1/...` so the two
+    /// don't collide on `/v1`. The user configures their client with
+    /// the corresponding base URL — e.g.
+    /// `OPENAI_BASE_URL=http://127.0.0.1:9452/openai/v1`.
+    pub fn for_path(path: &str) -> Option<Protocol> {
+        // Conservative: only accept exact known endpoints. New endpoints
+        // require an explicit code change here, not a permissive wildcard.
+        if path == "/v1/messages" {
+            return Some(Protocol::Anthropic);
+        }
+        if path == "/openai/v1/chat/completions" || path == "/openai/v1/responses" {
+            return Some(Protocol::OpenAI);
+        }
+        None
+    }
 
-pub fn parse_request(body: &[u8]) -> Result<AnthropicRequest, String> {
-    let s = std::str::from_utf8(body).map_err(|e| format!("utf8: {e}"))?;
-    let v = parse(s).map_err(|e| format!("json: {e:?}"))?;
-    let obj = match v {
-        JsonValue::Object(o) => o,
-        _ => return Err("request body must be a JSON object".into()),
-    };
+    /// Health/status routes that bypass the protocol layer entirely.
+    pub fn is_health_path(path: &str) -> bool {
+        matches!(path, "/health" | "/status")
+    }
 
-    let model = obj
-        .iter()
-        .find(|(k, _)| k == "model")
-        .and_then(|(_, v)| match v {
-            JsonValue::Str(s) => Some(s.clone()),
-            _ => None,
-        });
-
-    let system_prompt = obj
-        .iter()
-        .find(|(k, _)| k == "system")
-        .and_then(|(_, v)| match v {
-            JsonValue::Str(s) => Some(s.clone()),
-            // System can also be an array of content blocks; flatten text.
-            JsonValue::Array(arr) => {
-                let mut buf = String::new();
-                for b in arr {
-                    if let JsonValue::Object(o) = b {
-                        if let Some((_, JsonValue::Str(t))) = o.iter().find(|(k, _)| k == "text") {
-                            if !buf.is_empty() {
-                                buf.push('\n');
-                            }
-                            buf.push_str(t);
-                        }
-                    }
-                }
-                if buf.is_empty() {
-                    None
-                } else {
-                    Some(buf)
-                }
+    /// Upstream URL suffix for forwarding. The proxy concatenates this
+    /// onto the configured upstream base for this protocol.
+    pub fn upstream_path(&self, request_path: &str) -> String {
+        match self {
+            Protocol::Anthropic => "/v1/messages".to_string(),
+            Protocol::OpenAI => {
+                // Strip the local `/openai` prefix; the upstream
+                // (api.openai.com, api.x.ai, etc.) doesn't have it.
+                request_path
+                    .strip_prefix("/openai")
+                    .unwrap_or(request_path)
+                    .to_string()
             }
-            _ => None,
-        });
+        }
+    }
 
-    let messages_v = obj
-        .iter()
-        .find(|(k, _)| k == "messages")
-        .map(|(_, v)| v.clone())
-        .unwrap_or(JsonValue::Array(vec![]));
-    let messages = parse_messages(&messages_v)?;
+    /// Parse a request body into events. Errors carry a short reason
+    /// suitable for inclusion in a finding rationale.
+    pub fn parse_request(&self, body: &[u8], session_id: &str) -> Result<Vec<Event>, String> {
+        match self {
+            Protocol::Anthropic => anthropic::parse_request(body)
+                .map(|req| anthropic::request_to_events(&req, session_id)),
+            Protocol::OpenAI => {
+                openai::parse_request(body).map(|req| openai::request_to_events(&req, session_id))
+            }
+        }
+    }
 
-    Ok(AnthropicRequest {
-        model,
-        system_prompt,
-        messages,
-    })
-}
-
-fn parse_messages(v: &JsonValue) -> Result<Vec<Message>, String> {
-    let arr = match v {
-        JsonValue::Array(a) => a,
-        _ => return Err("messages must be array".into()),
-    };
-    let mut out = Vec::with_capacity(arr.len());
-    for m in arr {
-        let m_obj = match m {
-            JsonValue::Object(o) => o,
-            _ => continue,
+    /// Detect bodies whose shape disagrees with the path's protocol.
+    /// Used by the `protocol_mismatch_attempt` rule. Returns a
+    /// human-readable mismatch reason if one is found, `None` if the
+    /// body is consistent with this protocol.
+    pub fn body_disagrees(&self, body: &[u8]) -> Option<&'static str> {
+        let s = match std::str::from_utf8(body) {
+            Ok(s) => s,
+            Err(_) => return None, // not JSON; let the parser error normally
         };
-        let role = m_obj
+        let v = match crate::json::parse(s) {
+            Ok(v) => v,
+            Err(_) => return None,
+        };
+        let obj = match &v {
+            crate::json::JsonValue::Object(o) => o,
+            _ => return None,
+        };
+        let has_anthropic_marker = obj
             .iter()
-            .find(|(k, _)| k == "role")
-            .and_then(|(_, v)| match v {
-                JsonValue::Str(s) => Some(s.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "user".into());
-        let content_v = m_obj
-            .iter()
-            .find(|(k, _)| k == "content")
-            .map(|(_, v)| v.clone())
-            .unwrap_or(JsonValue::Array(vec![]));
-        let blocks = parse_blocks(&content_v);
-        out.push(Message { role, blocks });
-    }
-    Ok(out)
-}
-
-fn parse_blocks(v: &JsonValue) -> Vec<ContentBlock> {
-    match v {
-        JsonValue::Str(s) => vec![ContentBlock::Text(s.clone())],
-        JsonValue::Array(arr) => arr.iter().filter_map(parse_block).collect(),
-        _ => vec![],
-    }
-}
-
-fn parse_block(v: &JsonValue) -> Option<ContentBlock> {
-    let obj = match v {
-        JsonValue::Object(o) => o,
-        _ => return None,
-    };
-    let block_type = obj
-        .iter()
-        .find(|(k, _)| k == "type")
-        .and_then(|(_, v)| match v {
-            JsonValue::Str(s) => Some(s.clone()),
+            .any(|(k, _)| k == "anthropic_version" || k == "anthropic_beta")
+            || obj.iter().any(|(k, v)| {
+                k == "model"
+                    && matches!(v, crate::json::JsonValue::Str(s) if s.starts_with("claude"))
+            });
+        let has_openai_marker = obj.iter().any(|(k, _)| {
+            k == "frequency_penalty"
+                || k == "presence_penalty"
+                || k == "logit_bias"
+                || k == "n"
+                || k == "response_format"
+        }) || obj.iter().any(|(k, v)| {
+            k == "model"
+                && matches!(v, crate::json::JsonValue::Str(s)
+                    if s.starts_with("gpt-")
+                        || s.starts_with("o1")
+                        || s.starts_with("o3")
+                        || s.starts_with("o4")
+                        || s.starts_with("gemini-")
+                        || s.starts_with("grok-"))
+        });
+        match self {
+            Protocol::Anthropic if has_openai_marker && !has_anthropic_marker => {
+                Some("OpenAI-shaped body sent to Anthropic path")
+            }
+            Protocol::OpenAI if has_anthropic_marker && !has_openai_marker => {
+                Some("Anthropic-shaped body sent to OpenAI path")
+            }
+            _ if has_anthropic_marker && has_openai_marker => {
+                Some("body contains markers of both protocols (polyglot)")
+            }
             _ => None,
-        })?;
-    match block_type.as_str() {
-        "text" => {
-            let t = obj
-                .iter()
-                .find(|(k, _)| k == "text")
-                .and_then(|(_, v)| match v {
-                    JsonValue::Str(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            Some(ContentBlock::Text(t))
         }
-        "tool_use" => {
-            let id = string_field(obj, "id").unwrap_or_default();
-            let name = string_field(obj, "name").unwrap_or_default();
-            let input = obj
-                .iter()
-                .find(|(k, _)| k == "input")
-                .map(|(_, v)| v.clone())
-                .unwrap_or(JsonValue::Null);
-            Some(ContentBlock::ToolUse { id, name, input })
-        }
-        "tool_result" => {
-            let tool_use_id = string_field(obj, "tool_use_id").unwrap_or_default();
-            let is_error = obj
-                .iter()
-                .find(|(k, _)| k == "is_error")
-                .and_then(|(_, v)| match v {
-                    JsonValue::Bool(b) => Some(*b),
-                    _ => None,
-                })
-                .unwrap_or(false);
-            // content can be a string, an array of text blocks, or a single block
-            let content_raw = obj
-                .iter()
-                .find(|(k, _)| k == "content")
-                .map(|(_, v)| v.clone())
-                .unwrap_or(JsonValue::Str(String::new()));
-            let content = stringify_tool_result_content(&content_raw);
-            let media_types = extract_media_types(&content_raw);
-            Some(ContentBlock::ToolResult {
-                tool_use_id,
-                content,
-                is_error,
-                media_types,
-            })
-        }
-        other => Some(ContentBlock::Other(other.to_string())),
     }
 }
 
-fn stringify_tool_result_content(v: &JsonValue) -> String {
-    match v {
-        JsonValue::Str(s) => s.clone(),
-        JsonValue::Array(arr) => {
-            let mut buf = String::new();
-            for b in arr {
-                if let JsonValue::Object(o) = b {
-                    if let Some((_, JsonValue::Str(t))) = o.iter().find(|(k, _)| k == "text") {
-                        if !buf.is_empty() {
-                            buf.push('\n');
-                        }
-                        buf.push_str(t);
-                    }
-                }
-            }
-            buf
-        }
-        _ => String::new(),
-    }
-}
-
-/// Walk a tool_result content payload and return any non-text media types
-/// it contains: `image`, `audio`, `document`, etc. Multimodal content
-/// arriving in a tool_result is a structurally distinct trust surface —
-/// the model can be influenced by image text (typographic prompt
-/// injection) or sub-audible audio that the developer's terminal will
-/// never render. v1.5 #4 fires `multimodal_in_tool_result` on hits.
-pub fn extract_media_types(v: &JsonValue) -> Vec<String> {
-    let mut out = Vec::new();
-    if let JsonValue::Array(arr) = v {
-        for b in arr {
-            if let JsonValue::Object(o) = b {
-                if let Some((_, JsonValue::Str(t))) = o.iter().find(|(k, _)| k == "type") {
-                    match t.as_str() {
-                        "text" => continue,
-                        other => out.push(other.to_string()),
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-fn string_field(obj: &[(String, JsonValue)], key: &str) -> Option<String> {
-    obj.iter()
-        .find(|(k, _)| k == key)
-        .and_then(|(_, v)| match v {
-            JsonValue::Str(s) => Some(s.clone()),
-            _ => None,
-        })
-}
-
-/// Convert a parsed Anthropic request into the event stream the schema
-/// expects. The disambiguation between `user_prompt` and `tool_result` is
-/// the spec's non-negotiable invariant; this is where it happens.
-pub fn request_to_events(req: &AnthropicRequest, session_id: &str) -> Vec<Event> {
-    let mut events = Vec::new();
-    for msg in &req.messages {
-        for block in &msg.blocks {
-            match block {
-                ContentBlock::Text(text) => {
-                    let kind = if msg.role == "assistant" {
-                        EventKind::ModelText
-                    } else {
-                        EventKind::UserPrompt
-                    };
-                    let zone = if msg.role == "assistant" {
-                        TrustZone::WorkspaceLocal
-                    } else {
-                        TrustZone::UserInput
-                    };
-                    let mut body = HashMap::new();
-                    body.insert("text".into(), JsonValue::Str(text.clone()));
-                    events.push(Event::new(session_id, kind, zone, body));
-                }
-                ContentBlock::ToolUse { id, name, input } => {
-                    let mut body = HashMap::new();
-                    body.insert("tool_use_id".into(), JsonValue::Str(id.clone()));
-                    body.insert("tool_name".into(), JsonValue::Str(name.clone()));
-                    body.insert("input".into(), input.clone());
-                    events.push(Event::new(
-                        session_id,
-                        EventKind::ToolCall,
-                        TrustZone::WorkspaceLocal,
-                        body,
-                    ));
-                }
-                ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                    media_types,
-                } => {
-                    let mut body = HashMap::new();
-                    body.insert("tool_use_id".into(), JsonValue::Str(tool_use_id.clone()));
-                    body.insert("content".into(), JsonValue::Str(content.clone()));
-                    body.insert("is_error".into(), JsonValue::Bool(*is_error));
-                    if !media_types.is_empty() {
-                        body.insert(
-                            "media_types".into(),
-                            JsonValue::Array(
-                                media_types
-                                    .iter()
-                                    .map(|s| JsonValue::Str(s.clone()))
-                                    .collect(),
-                            ),
-                        );
-                    }
-                    // tool_result is ALWAYS untrusted_tool_output — this is the
-                    // schema-disambiguation invariant from spec §3.
-                    events.push(Event::new(
-                        session_id,
-                        EventKind::ToolResult,
-                        TrustZone::UntrustedToolOutput,
-                        body,
-                    ));
-                }
-                ContentBlock::Other(_) => {}
-            }
-        }
-    }
-    events
-}
+// Re-exports for callers that still use the un-namespaced types from when
+// agent-monitor was Anthropic-only. New code should go through `Protocol`.
+#[allow(deprecated)]
+pub use anthropic::{parse_request, request_to_events, AnthropicRequest, ContentBlock};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parses_text_message() {
-        let body = br#"{
-            "model": "claude-opus-4-7",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "hello"}]}
-            ]
-        }"#;
-        let req = parse_request(body).expect("parse");
-        assert_eq!(req.messages.len(), 1);
-        match &req.messages[0].blocks[0] {
-            ContentBlock::Text(t) => assert_eq!(t, "hello"),
-            _ => panic!("expected text"),
-        }
+    fn for_path_anthropic() {
+        assert_eq!(
+            Protocol::for_path("/v1/messages"),
+            Some(Protocol::Anthropic)
+        );
     }
 
     #[test]
-    fn distinguishes_tool_result_from_user_prompt() {
-        let body = br#"{
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "do it"}]},
-                {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "read", "input": {"path": "/etc/passwd"}}]},
-                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "root:x:0:0"}]}
-            ]
-        }"#;
-        let req = parse_request(body).expect("parse");
-        let events = request_to_events(&req, "sess");
-        assert_eq!(events.len(), 3);
-        assert_eq!(events[0].kind, EventKind::UserPrompt);
-        assert_eq!(events[0].trust_zone, TrustZone::UserInput);
-        assert_eq!(events[1].kind, EventKind::ToolCall);
-        assert_eq!(events[2].kind, EventKind::ToolResult);
-        // The schema-discipline invariant:
-        assert_eq!(events[2].trust_zone, TrustZone::UntrustedToolOutput);
+    fn for_path_openai_chat() {
+        assert_eq!(
+            Protocol::for_path("/openai/v1/chat/completions"),
+            Some(Protocol::OpenAI)
+        );
+    }
+
+    #[test]
+    fn for_path_openai_responses() {
+        assert_eq!(
+            Protocol::for_path("/openai/v1/responses"),
+            Some(Protocol::OpenAI)
+        );
+    }
+
+    #[test]
+    fn for_path_unknown() {
+        assert_eq!(Protocol::for_path("/v2/messages"), None);
+        assert_eq!(Protocol::for_path("/openai/v2/chat"), None);
+        assert_eq!(Protocol::for_path("/random"), None);
+    }
+
+    #[test]
+    fn for_path_does_not_strip_path_traversal() {
+        // Path normalisation happens upstream of this function — we only
+        // accept exact known strings, so traversal-style paths fail
+        // closed.
+        assert_eq!(Protocol::for_path("/openai/v1/../v1/messages"), None);
+        assert_eq!(Protocol::for_path("/v1/messages/../"), None);
+    }
+
+    #[test]
+    fn body_disagrees_anthropic_path_with_openai_body() {
+        let body = br#"{"model":"gpt-4o","messages":[],"frequency_penalty":0.0}"#;
+        assert!(Protocol::Anthropic.body_disagrees(body).is_some());
+    }
+
+    #[test]
+    fn body_disagrees_openai_path_with_anthropic_body() {
+        let body = br#"{"model":"claude-opus-4-7","anthropic_version":"2023-06-01","messages":[]}"#;
+        assert!(Protocol::OpenAI.body_disagrees(body).is_some());
+    }
+
+    #[test]
+    fn body_disagrees_polyglot() {
+        let body = br#"{"anthropic_version":"2023-06-01","frequency_penalty":0.0,"messages":[]}"#;
+        assert_eq!(
+            Protocol::Anthropic.body_disagrees(body),
+            Some("body contains markers of both protocols (polyglot)")
+        );
+        assert_eq!(
+            Protocol::OpenAI.body_disagrees(body),
+            Some("body contains markers of both protocols (polyglot)")
+        );
+    }
+
+    #[test]
+    fn body_consistent_anthropic() {
+        let body = br#"{"model":"claude-opus-4-7","messages":[]}"#;
+        assert_eq!(Protocol::Anthropic.body_disagrees(body), None);
+    }
+
+    #[test]
+    fn body_consistent_openai() {
+        let body = br#"{"model":"gpt-4o","messages":[]}"#;
+        assert_eq!(Protocol::OpenAI.body_disagrees(body), None);
+    }
+
+    #[test]
+    fn upstream_path_strips_openai_prefix() {
+        assert_eq!(
+            Protocol::OpenAI.upstream_path("/openai/v1/chat/completions"),
+            "/v1/chat/completions"
+        );
+        assert_eq!(
+            Protocol::Anthropic.upstream_path("/v1/messages"),
+            "/v1/messages"
+        );
     }
 }

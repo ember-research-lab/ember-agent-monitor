@@ -28,6 +28,7 @@ pub mod egress;
 pub mod event;
 pub mod graph;
 pub mod integrate;
+pub mod integrity;
 pub mod json;
 pub mod net;
 pub mod proto;

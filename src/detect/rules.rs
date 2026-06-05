@@ -1035,6 +1035,117 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     }
 }
 
+/// Persona-elevation / authority pretext — the Mexico breach and
+/// GTG-1002 / Anthropic Mythos shape.
+///
+/// Both real-world incidents bypassed model refusal by re-framing the
+/// session as an authorized exercise. Direct asks were refused;
+/// pretext changed the model's compliance calculus. The detection
+/// target is the user_prompt text itself.
+///
+/// Severity MEDIUM because the patterns also appear in legitimate
+/// security-research contexts. The differentiating signal at the
+/// suite level is co-occurrence: pretext + sensitive-zone access +
+/// multi-step plan is the GTG-1002 shape persistent catches as
+/// cross-session phase progression. This rule fires the per-prompt
+/// detection; persistent + suite-status compose them.
+///
+/// Sources: VentureBeat Feb 26 2026 (Mexico ~195M records); Anthropic
+/// threat intel Nov 13 2025 (GTG-1002).
+pub fn pretext_shift(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::UserPrompt {
+        return;
+    }
+    if event.trust_zone != TrustZone::UserInput {
+        return;
+    }
+    let text = string_from_body(event, "text").unwrap_or_default();
+    if text.is_empty() {
+        return;
+    }
+    for (_label, matcher) in patterns::pretext_shift_patterns() {
+        if let Some(label) = matcher(&text) {
+            // Note: we deliberately do NOT multiply by
+            // `inverse_trust(UserInput)` here. UserInput's inverse_trust
+            // is 0.05 because user-typed text is normally the *least*
+            // suspicious zone. For pretext_shift the threat model is
+            // exactly "the user is the adversary"; the inverse_trust
+            // dimension doesn't apply. Use the severity weight directly
+            // so the score stays above min_score and the finding fires.
+            let score = PATTERN_HIT_WEIGHT * Severity::Medium.weight();
+            out.push(Finding {
+                finding_type: "pretext_shift".into(),
+                scope: FindingScope::Dynamic,
+                severity: Severity::Medium,
+                session_id: event.session_id.clone(),
+                event_id: Some(event.event_id.clone()),
+                tool: None,
+                argument: None,
+                matched_value: None,
+                pattern: Some(label.into()),
+                trust_zone: Some(event.trust_zone),
+                rationale:
+                    "User prompt asserts authority/scope-elevation matching pretext-shift patterns (Mexico/GTG-1002 shape)"
+                        .into(),
+                score,
+            });
+        }
+    }
+}
+
+/// Agent-as-trusted-intermediary social engineering — the ClickFix attack
+/// class. Distinct from `instruction_shape_in_tool_result` (which targets
+/// the *model*). ClickFix targets the *user*, using the agent as a delivery
+/// channel: a tool-result containing instructions like "open Terminal and
+/// run X" or a base64-encoded shell payload. The agent presents these as
+/// legitimate setup steps; user trust in the agent bypasses the user's own
+/// scrutiny.
+///
+/// Patterns are conservatively scoped to high-confidence shapes that
+/// essentially never appear in legitimate retrieved documentation
+/// (`patterns::clickfix_patterns`). Severity HIGH because user-side
+/// execution bypasses the agent's guardrails entirely.
+///
+/// Sources: ClawHavoc / ClickFix campaign (Koi Security Feb 2 2026,
+/// BulwarkAI Feb 26 2026), Acronis HF skills (May 1 2026), corpus
+/// extension §3.1.
+pub fn agent_as_intermediary_clickfix(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolResult {
+        return;
+    }
+    if event.trust_zone != TrustZone::UntrustedToolOutput {
+        return;
+    }
+    let content = string_from_body(event, "content")
+        .or_else(|| string_from_body(event, "content_preview"))
+        .unwrap_or_default();
+    if content.is_empty() {
+        return;
+    }
+    for (_label, matcher) in patterns::clickfix_patterns() {
+        if let Some(label) = matcher(&content) {
+            let score =
+                PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * Severity::High.weight();
+            out.push(Finding {
+                finding_type: "agent_as_intermediary_clickfix".into(),
+                scope: FindingScope::Dynamic,
+                severity: Severity::High,
+                session_id: event.session_id.clone(),
+                event_id: Some(event.event_id.clone()),
+                tool: None,
+                argument: None,
+                matched_value: None,
+                pattern: Some(label.into()),
+                trust_zone: Some(event.trust_zone),
+                rationale:
+                    "Untrusted tool output contains user-targeted social-engineering script (ClickFix shape)"
+                        .into(),
+                score,
+            });
+        }
+    }
+}
+
 fn looks_path_like(s: &str) -> bool {
     s.contains('/') || s.contains('~') || s.contains('\\')
 }

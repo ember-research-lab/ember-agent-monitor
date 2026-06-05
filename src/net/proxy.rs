@@ -1,9 +1,15 @@
-//! Anthropic Messages API proxy.
+//! Multi-protocol LLM API proxy.
 //!
-//! Listens on localhost (HTTP only — loopback never needs TLS), parses
-//! incoming `POST /v1/messages` calls, records them as events, forwards
-//! upstream via system `curl`, parses the response, records it, and returns
-//! to the client.
+//! Listens on localhost (HTTP only — loopback never needs TLS), routes
+//! requests by URL path to a `Protocol`-specific parser (`Anthropic` or
+//! `OpenAI`), records them as `Event`s, forwards upstream via system
+//! `curl`, parses the response, records it, and returns to the client.
+//!
+//! Path-prefix routing (see `proto::Protocol::for_path`) is intentional:
+//! auto-detection by body shape was rejected because it makes
+//! protocol-confusion attacks controllable by the attacker. Routing
+//! stays deterministic; the `protocol_mismatch_attempt` rule catches
+//! body/path disagreement as observable signal.
 //!
 //! curl is the same TLS primitive vetpkg uses (see vetpkg/src/net/http_client.rs).
 //! It's a system tool, not a Cargo dependency, and it ships on every
@@ -14,7 +20,8 @@ use crate::event::Event;
 use crate::graph::SessionGraph;
 use crate::json::{parse, JsonValue};
 use crate::net::http::{read_request, HttpRequest, HttpResponse};
-use crate::proto::{parse_request as parse_anthropic, request_to_events};
+#[allow(deprecated)]
+use crate::proto::{anthropic, Protocol};
 use crate::store::log::EventLogWriter;
 use crate::store::summary::{SessionSummary, SpectralSummary};
 use crate::store::Store;
@@ -75,6 +82,13 @@ impl ProxyContext {
             EventLogWriter::open(&path).expect("open event log")
         });
         let _ = writer.append(event);
+    }
+
+    /// Public alias for the internal finding recorder. Used by handlers
+    /// that detect protocol-level signals (e.g. `protocol_mismatch_attempt`)
+    /// before per-event analysis runs.
+    pub fn record_finding_public(&self, finding: &Finding) {
+        self.record_finding(finding);
     }
 
     /// Append a finding to per-session findings.jsonl. Lossy on failure —
@@ -172,8 +186,8 @@ pub fn serve(ctx: Arc<ProxyContext>, stop: Arc<AtomicBool>) -> Result<(), String
         .set_nonblocking(false)
         .map_err(|e| format!("listener config: {e}"))?;
     eprintln!(
-        "ember-agent: proxy on http://{}, forwarding to {}",
-        addr, ctx.config.upstream_anthropic
+        "ember-agent: proxy on http://{}, forwarding anthropic→{} openai→{}",
+        addr, ctx.config.upstream_anthropic, ctx.config.upstream_openai,
     );
 
     let active: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
@@ -213,32 +227,65 @@ fn handle_connection(mut stream: TcpStream, ctx: Arc<ProxyContext>) {
         Err(_) => return,
     };
 
-    let resp = match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/health") | ("GET", "/status") => {
-            HttpResponse::ok_json(br#"{"status":"ok","tool":"ember-agent-monitor"}"#.to_vec())
+    let resp = if req.method == "GET" && Protocol::is_health_path(&req.path) {
+        HttpResponse::ok_json(br#"{"status":"ok","tool":"ember-agent-monitor"}"#.to_vec())
+    } else if req.method == "POST" {
+        match Protocol::for_path(&req.path) {
+            Some(protocol) => handle_messages(&req, &ctx, protocol),
+            None => HttpResponse {
+                status: 404,
+                status_text: "Not Found".into(),
+                headers: vec![
+                    ("Content-Type".into(), "application/json".into()),
+                    ("Content-Length".into(), "23".into()),
+                ],
+                body: br#"{"error":"not_handled"}"#.to_vec(),
+            },
         }
-        ("POST", "/v1/messages") => handle_messages(&req, &ctx),
-        _ => HttpResponse {
-            status: 404,
-            status_text: "Not Found".into(),
-            headers: vec![
-                ("Content-Type".into(), "application/json".into()),
-                ("Content-Length".into(), "23".into()),
-            ],
-            body: br#"{"error":"not_handled"}"#.to_vec(),
-        },
+    } else {
+        HttpResponse {
+            status: 405,
+            status_text: "Method Not Allowed".into(),
+            headers: vec![("Content-Length".into(), "0".into())],
+            body: Vec::new(),
+        }
     };
     let _ = resp.write_to(&mut stream);
 }
 
-fn handle_messages(req: &HttpRequest, ctx: &ProxyContext) -> HttpResponse {
-    let parsed = parse_anthropic(&req.body);
-    let session_id = derive_session_id(req, &parsed.as_ref().ok());
+fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) -> HttpResponse {
+    // Detect protocol/body mismatch as a finding before parsing — even if
+    // the body parses cleanly, a mismatch is signal worth recording.
+    let mismatch_reason = protocol.body_disagrees(&req.body);
+    let session_id = derive_session_id_for(req, &req.body, protocol);
 
-    // Record + analyze every event from the inbound request.
+    if let Some(reason) = mismatch_reason {
+        let finding = Finding {
+            finding_type: "protocol_mismatch_attempt".into(),
+            scope: crate::detect::FindingScope::Static,
+            severity: Severity::Medium,
+            session_id: session_id.clone(),
+            event_id: None,
+            tool: None,
+            argument: Some(req.path.clone()),
+            matched_value: Some(protocol.id().to_string()),
+            pattern: None,
+            trust_zone: None,
+            rationale: format!(
+                "request to {} ({}); body disagrees: {}",
+                req.path,
+                protocol.id(),
+                reason
+            ),
+            score: Severity::Medium.weight(),
+        };
+        ctx.record_finding_public(&finding);
+    }
+
+    // Parse + record + analyze every event from the inbound request.
     let mut high_findings: Vec<Finding> = Vec::new();
-    if let Ok(p) = &parsed {
-        for ev in request_to_events(p, &session_id) {
+    if let Ok(events) = protocol.parse_request(&req.body, &session_id) {
+        for ev in events {
             ctx.record(&ev);
             for f in ctx.analyze(&ev) {
                 if matches!(f.severity, Severity::High | Severity::Critical) {
@@ -259,16 +306,47 @@ fn handle_messages(req: &HttpRequest, ctx: &ProxyContext) -> HttpResponse {
             // Forward warnings are advisory — they don't stop a committed
             // model (spec §5). Backward intervention is the actual safety
             // mechanism for the response path.
-            let augmented = inject_system_warning(&req.body, &high_findings);
-            let body = augmented.unwrap_or_else(|| req.body.clone());
-            let upstream_url = format!("{}/v1/messages", ctx.config.upstream_anthropic);
-            return forward_and_intervene(&upstream_url, &body, &req.headers, ctx, &session_id);
+            //
+            // Anthropic-only for now: OpenAI's `system` role lives in
+            // `messages` rather than as a top-level field, and the
+            // forward-warn path needs more care to preserve message
+            // ordering. Backward strip works for both protocols (the
+            // committed-model invariant is the real safety mechanism).
+            let body = if protocol == Protocol::Anthropic {
+                inject_system_warning(&req.body, &high_findings).unwrap_or_else(|| req.body.clone())
+            } else {
+                req.body.clone()
+            };
+            let upstream_url = format!(
+                "{}{}",
+                ctx.config.upstream_for(protocol),
+                protocol.upstream_path(&req.path)
+            );
+            return forward_and_intervene(
+                &upstream_url,
+                &body,
+                &req.headers,
+                ctx,
+                &session_id,
+                protocol,
+            );
         }
         _ => {}
     }
 
-    let upstream_url = format!("{}/v1/messages", ctx.config.upstream_anthropic);
-    forward_and_intervene(&upstream_url, &req.body, &req.headers, ctx, &session_id)
+    let upstream_url = format!(
+        "{}{}",
+        ctx.config.upstream_for(protocol),
+        protocol.upstream_path(&req.path)
+    );
+    forward_and_intervene(
+        &upstream_url,
+        &req.body,
+        &req.headers,
+        ctx,
+        &session_id,
+        protocol,
+    )
 }
 
 fn forward_and_intervene(
@@ -277,6 +355,7 @@ fn forward_and_intervene(
     headers: &[(String, String)],
     ctx: &ProxyContext,
     session_id: &str,
+    protocol: Protocol,
 ) -> HttpResponse {
     let response_body = match forward_via_curl(upstream_url, body, headers) {
         Ok(r) => r,
@@ -295,17 +374,30 @@ fn forward_and_intervene(
     };
 
     // Record response events and run dynamic detection.
-    let response_findings = record_and_analyze_response(&response_body, session_id, ctx);
+    // OpenAI response parsing is currently best-effort observe-only; the
+    // backward-strip path is Anthropic-tested and protocol-shaped. We
+    // log openai response events to the session graph but defer
+    // strip-and-substitute to a follow-up so the existing Anthropic
+    // intervention surface stays untouched in this refactor.
+    let response_findings = if protocol == Protocol::Anthropic {
+        record_and_analyze_response(&response_body, session_id, ctx)
+    } else {
+        Vec::new()
+    };
     let blocked: Vec<&Finding> = response_findings
         .iter()
         .filter(|f| matches!(f.severity, Severity::High | Severity::Critical))
         .collect();
 
     // Backward-direction intervention: strip dangerous tool_use blocks.
-    let final_body = if matches!(
-        ctx.config.mode,
-        InterventionMode::Warn | InterventionMode::Block
-    ) && !blocked.is_empty()
+    // Anthropic-only at the moment; the OpenAI strip path lands when
+    // OpenAI response analysis lands (same follow-up as above).
+    let final_body = if protocol == Protocol::Anthropic
+        && matches!(
+            ctx.config.mode,
+            InterventionMode::Warn | InterventionMode::Block
+        )
+        && !blocked.is_empty()
     {
         strip_tool_use_in_response(&response_body, &blocked).unwrap_or(response_body.clone())
     } else {
@@ -545,32 +637,54 @@ fn read_findings(path: &std::path::Path) -> Vec<Finding> {
     out
 }
 
-fn derive_session_id(
-    req: &HttpRequest,
-    parsed: &Option<&crate::proto::AnthropicRequest>,
-) -> String {
-    // Prefer the agent's explicit session header if present (Claude Code sets
-    // x-claude-session-id on each turn). Fall back to a hash of the first
-    // user message — same turn → same hash, which is good enough for the
-    // session graph constructor.
-    if let Some(s) = req.header("x-claude-session-id") {
-        return s.to_string();
-    }
-    if let Some(p) = parsed {
-        if let Some(first) = p.messages.first() {
-            if let Some(crate::proto::ContentBlock::Text(t)) = first.blocks.first() {
-                let h = crate::crypto::sha256::sha256(t.as_bytes());
-                let mut out = String::with_capacity(16);
-                const HEX: &[u8; 16] = b"0123456789abcdef";
-                for b in h.iter().take(8) {
-                    out.push(HEX[(b >> 4) as usize] as char);
-                    out.push(HEX[(b & 0x0f) as usize] as char);
-                }
-                return format!("anon-{out}");
-            }
+fn derive_session_id_for(req: &HttpRequest, body: &[u8], protocol: Protocol) -> String {
+    // 1. Explicit per-turn session headers — both vendors-of-record use
+    //    one. Claude Code sets `x-claude-session-id`; Codex / OpenAI
+    //    SDKs commonly set `openai-conversation-id` or
+    //    `x-request-id`. We accept any of the three so a single client
+    //    that switches protocols mid-flight (e.g., the math-delegation
+    //    case) maintains session continuity.
+    for h in [
+        "x-claude-session-id",
+        "openai-conversation-id",
+        "x-ember-session-id",
+    ] {
+        if let Some(s) = req.header(h) {
+            return s.to_string();
         }
     }
-    format!("anon-{}", std::process::id())
+
+    // 2. Hash of the first user message text — same turn → same hash.
+    let first_user_text = match protocol {
+        Protocol::Anthropic =>
+        {
+            #[allow(deprecated)]
+            anthropic::parse_request(body).ok().and_then(|p| {
+                p.messages.first().and_then(|m| {
+                    m.blocks.iter().find_map(|b| match b {
+                        anthropic::ContentBlock::Text(t) => Some(t.clone()),
+                        _ => None,
+                    })
+                })
+            })
+        }
+        Protocol::OpenAI => crate::proto::openai::parse_request(body)
+            .ok()
+            .and_then(|p| p.messages.first().and_then(|m| m.content.clone())),
+    };
+
+    if let Some(t) = first_user_text {
+        let h = crate::crypto::sha256::sha256(t.as_bytes());
+        let mut out = String::with_capacity(16);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        for b in h.iter().take(8) {
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0x0f) as usize] as char);
+        }
+        return format!("anon-{}-{out}", protocol.id());
+    }
+
+    format!("anon-{}-{}", protocol.id(), std::process::id())
 }
 
 fn forward_via_curl(

@@ -44,7 +44,13 @@ fn print_help() {
     eprintln!();
     eprintln!("SUBCOMMANDS:");
     eprintln!("  init                 Initialize ~/.ember/agent-monitor");
-    eprintln!("  daemon [--mode M]    Run proxy + file-watcher (M = observe|warn|block)");
+    eprintln!("  daemon [--mode M] [--port P] [--data-dir D] [--integrity-manifest F]");
+    eprintln!("         [--upstream-anthropic URL] [--upstream-openai URL]");
+    eprintln!("                       Run proxy + file-watcher (M = observe|warn|block).");
+    eprintln!(
+        "                       Routes /v1/messages → Anthropic, /openai/v1/* → OpenAI-compat."
+    );
+    eprintln!("                       --integrity-manifest enables hash-pinned file checks.");
     eprintln!("  status               Show daemon health and fidelity status");
     eprintln!("  findings [--session S]");
     eprintln!("                       List findings (optionally for one session)");
@@ -82,6 +88,17 @@ fn cmd_daemon(args: Vec<String>) -> Result<u8, String> {
                 let v = iter.next().ok_or("--data-dir requires a value")?;
                 cfg.data_dir = PathBuf::from(v);
             }
+            "--integrity-manifest" => {
+                let v = iter.next().ok_or("--integrity-manifest requires a path")?;
+                cfg.integrity_manifest = Some(PathBuf::from(v));
+            }
+            "--upstream-anthropic" => {
+                cfg.upstream_anthropic =
+                    iter.next().ok_or("--upstream-anthropic requires a URL")?;
+            }
+            "--upstream-openai" => {
+                cfg.upstream_openai = iter.next().ok_or("--upstream-openai requires a URL")?;
+            }
             _ => return Err(format!("unknown daemon flag: {arg}")),
         }
     }
@@ -91,6 +108,17 @@ fn cmd_daemon(args: Vec<String>) -> Result<u8, String> {
         cfg.proxy_port,
         cfg.data_dir.display(),
     );
+    let integrity_manifest = match &cfg.integrity_manifest {
+        Some(p) => Some(crate::integrity::Manifest::load(p)?),
+        None => None,
+    };
+    if let Some(m) = &integrity_manifest {
+        eprintln!(
+            "ember-agent: integrity — pinning {} file(s) from {}",
+            m.files.len(),
+            cfg.integrity_manifest.as_ref().unwrap().display(),
+        );
+    }
     let ctx = std::sync::Arc::new(crate::net::proxy::ProxyContext::new(cfg.clone())?);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -100,8 +128,34 @@ fn cmd_daemon(args: Vec<String>) -> Result<u8, String> {
     let watch_stop = std::sync::Arc::clone(&stop);
     std::thread::spawn(move || run_watcher(watch_cfg, watch_ctx, watch_stop));
 
+    // Integrity-check loop in a background thread (only if a manifest is set).
+    if let Some(manifest) = integrity_manifest {
+        let integrity_data_dir = cfg.data_dir.clone();
+        let integrity_stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || run_integrity(manifest, integrity_data_dir, integrity_stop));
+    }
+
     crate::net::proxy::serve(ctx, stop)?;
     Ok(0)
+}
+
+fn run_integrity(
+    manifest: crate::integrity::Manifest,
+    data_dir: std::path::PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    let mut state = crate::integrity::IntegrityState::new();
+    while !stop.load(Ordering::Relaxed) {
+        for finding in state.check(&manifest) {
+            eprintln!(
+                "ember-agent: integrity HIGH — {}",
+                finding.argument.as_deref().unwrap_or("?")
+            );
+            crate::integrity::append_finding(&data_dir, &finding);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
 }
 
 fn run_watcher(
