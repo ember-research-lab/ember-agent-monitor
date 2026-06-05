@@ -1,7 +1,7 @@
 # Egress Gate — design note
 
-**Status:** scaffold (state machine + tests). Integration into `net::proxy` + `store` is follow-up.
-**Module:** `src/egress/mod.rs`.
+**Status:** state machine + **durable held state** (`PersistentEgressGate`, seam #2) + **bypass detection** (`bypass`, seam #4) implemented & tested. Remaining: the consumer-side *suspension* of the real outbound call, and the action-audit ledger (seams #1, #3 — the ledger is built in the SMB consumer via `cortex-audit`).
+**Module:** `src/egress/mod.rs` (+ `journal.rs`, `bypass.rs`).
 
 ## Why this lives in ember-agent-monitor
 
@@ -76,17 +76,26 @@ bypass `Finding`. The first decision gates the rest.
    resumes it exactly once. Note the proxy's `forward_via_curl` is **synchronous per worker thread**
    (16-thread pool) — holding requests there for hours deadlocks the data plane, so suspension means
    decoupling the response from the request thread (enqueue → ack → later dispatch), not blocking.
-2. **Durable held state.** Held actions must survive a restart (resume-after-approval can be hours
-   later). Persist them via `store` keyed by `PendingId`; the in-memory `Mutex<VecDeque<..>>` here is
-   the dev/default.
+2. **Durable held state.** ✅ **Implemented** as `PersistentEgressGate` + `egress::journal` — an
+   append-only JSONL journal (same posture as `store::log`: one `write_all`+`flush` per record, zero
+   deps, serialized via `crate::json`) recording every `held`/`resolved` transition, keyed by
+   `PendingId`. `PersistentEgressGate::recover(path)` replays it to rebuild the live held set and seed
+   the id counter past the high-water mark (no post-restart id collision). Crash-safe by ordering:
+   `submit` queues-then-journals (rolls back on journal failure); `resolve` removes-then-journals
+   **before** the caller can act on `Execute`, so no crash window double-executes or loses an action.
+   The in-memory `EgressGate` stays the dev/default; durability is opt-in via the wrapper.
 3. **Audit.** Every `submit`/`resolve` must be appended to the action-audit ledger, attributed to the
    acting principal and (on resolve) the approver — and on a deny, the **`reason`** (now carried
    through `Resolution::Cancelled { reason }`, so it isn't lost at the boundary). Note: this crate has
    **SHA-256 only, no signing primitive** — "signed log" here means a **hash-chained** JSONL (each line
    `prev_hash = sha256(prev)`) or an in-crate **HMAC-SHA256**, not asymmetric signatures, to stay
    within the zero-dep posture.
-4. **Findings.** Egress observed on the wire (via `ember-network`) without a prior gate approval record
-   is a bypass — the proxy should emit a HIGH `detect::Finding` for it.
+4. **Findings.** ✅ **Implemented** as `egress::bypass` — `detect_bypass(observed, approved, session)`
+   reconciles an `ObservedEgress` (the wire observation `ember-network` provides) against the gate's
+   approved correlation-token set (`journal::recover(..).approved`) and returns a HIGH `egress_bypass`
+   `detect::Finding` when the egress reached the wire with no prior gate approval. Scope-honest: this
+   crate owns the gate state + the `Finding`; producing the wire observation stays `ember-network`'s
+   job (this is not a network tool). Wiring the observation source in is the cross-tool integration.
 
 ## Invariants (what conformance must prove)
 
