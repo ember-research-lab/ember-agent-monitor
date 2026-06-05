@@ -54,8 +54,10 @@ pub struct OutfacingAction {
     pub payload_ref: String,
 }
 
-/// Opaque handle to a held action awaiting a decision. Stable across restart
-/// (the integrator persists held state under this id).
+/// Opaque handle to a held action awaiting a decision. **Process-local + monotonic**
+/// as minted here (`egress-<n>`). Durable identity across restart is the integrator's
+/// job (seam 3b): persist held state under this id and mint it with a boot nonce /
+/// disk-backed counter so ids do not collide after a restart.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PendingId(pub String);
 
@@ -68,11 +70,12 @@ pub enum Decision {
 }
 
 /// The outcome of resolving a held action. On approve, the integrator must
-/// **resume/execute** the returned action exactly once; on deny it is dropped.
+/// **resume/execute** the returned action exactly once; on deny it is dropped,
+/// carrying the deny `reason` through for the audit record (don't lose it).
 #[derive(Clone, Debug)]
 pub enum Resolution {
     Execute(OutfacingAction),
-    Cancelled,
+    Cancelled { reason: String },
 }
 
 /// A currently-held action, for rendering on approval surfaces.
@@ -95,10 +98,17 @@ pub enum GateError {
 /// integrator (the proxy/dispatcher) is responsible for *not* performing the real
 /// egress until then, for resuming it exactly once on approve, and for auditing
 /// every submit/resolve to the action ledger.
+/// Internal state behind a **single** lock — one mutex, one invariant: the queue
+/// and the id counter move together (no cross-lock gap).
+#[derive(Default)]
+struct GateState {
+    queue: VecDeque<HeldAction>,
+    counter: u64,
+}
+
 #[derive(Default)]
 pub struct EgressGate {
-    held: Mutex<VecDeque<HeldAction>>,
-    counter: Mutex<u64>,
+    state: Mutex<GateState>,
 }
 
 impl EgressGate {
@@ -111,10 +121,10 @@ impl EgressGate {
     /// a consumer that wishes to auto-approve simply calls `resolve` immediately
     /// with an authorized approver — the gate stays the single enforcement point.)
     pub fn submit(&self, action: OutfacingAction) -> PendingId {
-        let mut c = self.counter.lock().unwrap();
-        *c += 1;
-        let id = PendingId(format!("egress-{}", *c));
-        self.held.lock().unwrap().push_back(HeldAction {
+        let mut st = self.state.lock().unwrap();
+        st.counter += 1;
+        let id = PendingId(format!("egress-{}", st.counter));
+        st.queue.push_back(HeldAction {
             id: id.clone(),
             action,
         });
@@ -124,23 +134,25 @@ impl EgressGate {
     /// Resolve a held action. `Approve` returns the action to resume/execute;
     /// `Deny` cancels it. Resolving an unknown/already-resolved id is an error.
     pub fn resolve(&self, id: &PendingId, decision: Decision) -> Result<Resolution, GateError> {
-        let mut held = self.held.lock().unwrap();
-        let pos = held
+        let mut st = self.state.lock().unwrap();
+        let pos = st
+            .queue
             .iter()
             .position(|h| &h.id == id)
             .ok_or(GateError::UnknownPending)?;
-        let entry = held.remove(pos).expect("position just found");
+        let entry = st.queue.remove(pos).expect("position just found");
         match decision {
             Decision::Approve { .. } => Ok(Resolution::Execute(entry.action)),
-            Decision::Deny { .. } => Ok(Resolution::Cancelled),
+            Decision::Deny { reason, .. } => Ok(Resolution::Cancelled { reason }),
         }
     }
 
     /// Held actions for a namespace — the approval queue a surface renders.
     pub fn pending(&self, namespace: &str) -> Vec<HeldAction> {
-        self.held
+        self.state
             .lock()
             .unwrap()
+            .queue
             .iter()
             .filter(|h| h.action.namespace == namespace)
             .cloned()
@@ -149,7 +161,7 @@ impl EgressGate {
 
     /// Count of all held actions (across namespaces).
     pub fn pending_count(&self) -> usize {
-        self.held.lock().unwrap().len()
+        self.state.lock().unwrap().queue.len()
     }
 }
 
@@ -183,7 +195,7 @@ mod tests {
             .unwrap();
         match res {
             Resolution::Execute(a) => assert_eq!(a.principal, "a1"),
-            Resolution::Cancelled => panic!("approve must execute"),
+            Resolution::Cancelled { .. } => panic!("approve must execute"),
         }
         assert_eq!(gate.pending("tenant-1").len(), 0);
     }
@@ -201,7 +213,11 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(matches!(res, Resolution::Cancelled));
+        // Cancelled carries the deny reason through for the audit record.
+        match res {
+            Resolution::Cancelled { reason } => assert_eq!(reason, "no"),
+            Resolution::Execute(_) => panic!("deny must cancel"),
+        }
         assert_eq!(gate.pending("tenant-1").len(), 0);
     }
 
