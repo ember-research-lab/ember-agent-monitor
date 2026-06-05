@@ -129,7 +129,7 @@ pub fn instruction_patterns() -> &'static [(&'static str, Matcher)] {
             if s.contains("{GODMODE:") || s.contains("{godmode:") {
                 return Some("GODMODE marker");
             }
-            if s.contains("🐉") {
+            if s.contains('🐉') {
                 // Check for any tag-char co-occurrence in nearby bytes.
                 for ch in s.chars() {
                     let cp = ch as u32;
