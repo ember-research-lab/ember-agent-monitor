@@ -36,9 +36,10 @@ The documented read order (`README.md`, `design/README.md`):
    (the substrate is trusted by assumption).
 5. `docs/session-graph-contract.md` — on-disk contract to persistent + network.
 6. `threat-intel/README.md` — the regression-fixture catalog + intel cadence.
-
-(The task brief referenced a `runtime-abstraction.md`; no such file exists
-in the repo — the docs above are the actual set.)
+7. `design/runtime-abstraction.md` — v1.6 design: `RuntimeAdapter` layer
+   (Claude Code / OpenClaw / Hermes) above the `Protocol` enum. Design
+   only, pre-implementation; referenced by ember-presence's
+   `deploy/openclaw.json` runtime block.
 
 ## Honest scope — quote the spec, don't overclaim
 
