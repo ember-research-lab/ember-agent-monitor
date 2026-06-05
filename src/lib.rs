@@ -24,6 +24,7 @@
 pub mod cli;
 pub mod crypto;
 pub mod detect;
+pub mod egress;
 pub mod event;
 pub mod graph;
 pub mod integrate;
