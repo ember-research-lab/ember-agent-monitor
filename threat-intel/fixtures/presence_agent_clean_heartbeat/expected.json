@@ -1,0 +1,7 @@
+{
+  "fixture": "presence_agent_clean_heartbeat",
+  "_note": "Routine presence-agent heartbeat (Zenodo poll + GitHub poll + queue read, all clean). One spectral_motif_match fires because the 3-source/3-sink bipartite shape of a heartbeat trips `bipartite_2x2_amplification`. This is a calibration target: presence-agent heartbeats have this shape by design and the calibration corpus needs to learn it. Tracked as a calibration-window action item — once N real heartbeats land in `~/.ember/agent-monitor/sessions/`, run `ember-agent calibrate` against them and the motif match will move from MEDIUM to within-baseline. Pinning the current behavior so we notice if it changes for unrelated reasons.",
+  "expected_findings": [
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

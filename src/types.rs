@@ -293,7 +293,32 @@ pub struct DaemonConfig {
     pub mode: InterventionMode,
     pub data_dir: std::path::PathBuf,
     pub watch_dir: std::path::PathBuf,
+    /// Upstream base URL for Anthropic-protocol traffic
+    /// (e.g. `https://api.anthropic.com`). Path is appended per request.
     pub upstream_anthropic: String,
+    /// Upstream base URL for OpenAI-compatible traffic
+    /// (e.g. `https://api.openai.com`, `https://api.x.ai`,
+    /// `https://generativelanguage.googleapis.com/v1beta/openai`,
+    /// `http://localhost:11434/v1` for Ollama). Path is appended per
+    /// request.
+    pub upstream_openai: String,
+    /// Optional path to a hash-pinned integrity manifest. When set, the
+    /// daemon spawns an integrity-check thread that emits
+    /// `frozen_file_modification` findings on hash drift. See
+    /// `integrity::Manifest` for the on-disk schema.
+    pub integrity_manifest: Option<std::path::PathBuf>,
+}
+
+impl DaemonConfig {
+    /// Resolve a `Protocol` to its configured upstream base URL.
+    /// Centralised here so adding a new protocol means adding one
+    /// match arm + one config field, not hunting for `format!` calls.
+    pub fn upstream_for(&self, protocol: crate::proto::Protocol) -> &str {
+        match protocol {
+            crate::proto::Protocol::Anthropic => &self.upstream_anthropic,
+            crate::proto::Protocol::OpenAI => &self.upstream_openai,
+        }
+    }
 }
 
 impl Default for DaemonConfig {
@@ -307,6 +332,8 @@ impl Default for DaemonConfig {
             data_dir,
             watch_dir,
             upstream_anthropic: "https://api.anthropic.com".into(),
+            upstream_openai: "https://api.openai.com".into(),
+            integrity_manifest: None,
         }
     }
 }

@@ -1,0 +1,10 @@
+{
+  "fixture": "clawhavoc_clickfix_jan2026",
+  "_note": "ClawHavoc / ClickFix: malicious skill metadata socially engineers the user (via the agent) to run a base64-encoded shell payload. Agent fetches a skill description; the result body lands as untrusted_tool_output. The new agent_as_intermediary_clickfix rule fires HIGH twice — once for base64-decode-to-shell, once for open-terminal-and-run (both shapes co-occur in a single skill, typical of the campaign). Plus the 4-event read→transform→write shape trips the spectral motif and Fiedler anomaly. Sources: Koi Security Feb 2 2026, BulwarkAI Feb 26 2026, Trend Micro Feb 23 2026.",
+  "expected_findings": [
+    {"type": "agent_as_intermediary_clickfix", "scope": "dynamic", "severity": "high"},
+    {"type": "agent_as_intermediary_clickfix", "scope": "dynamic", "severity": "high"},
+    {"type": "spectral_anomaly", "scope": "static", "severity": "medium"},
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

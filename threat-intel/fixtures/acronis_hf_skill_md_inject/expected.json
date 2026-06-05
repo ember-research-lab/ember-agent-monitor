@@ -1,0 +1,10 @@
+{
+  "fixture": "acronis_hf_skill_md_inject",
+  "_note": "Acronis TRU May 1 2026: 575+ malicious skills across 13 dev accounts on HuggingFace skills marketplace. Primary actors: hightower6eu (334 skills), sakaen736jih (199 skills). Cross-platform Windows + macOS payloads (AMOS, cryptominers, infostealers). Novel TTP relative to ClawHavoc: indirect prompt injection embedded in SKILL.md metadata itself — when the agent fetches the skill description for review, metadata carries hidden instructions causing the agent to fetch + execute external code.\n\nThis fixture exercises instruction_shape_in_tool_result against the SKILL.md retrieval shape. clawhavoc_clickfix covered the user-facing ClickFix shape; this is the model-facing prompt-injection shape. 4 findings: 2× instruction_shape (imperative + ignore-previous) + spectral_anomaly + spectral_motif_match (exfil_pipeline_3path on the 4-event read→transform→write graph).\n\nSources: Acronis TRU May 1 2026; SecurityWeek May 1 2026; corpus extension §2.2.",
+  "expected_findings": [
+    {"type": "instruction_shape_in_tool_result", "scope": "dynamic", "severity": "medium"},
+    {"type": "instruction_shape_in_tool_result", "scope": "dynamic", "severity": "medium"},
+    {"type": "spectral_anomaly", "scope": "static", "severity": "medium"},
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

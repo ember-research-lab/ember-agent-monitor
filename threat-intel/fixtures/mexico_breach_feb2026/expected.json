@@ -1,0 +1,10 @@
+{
+  "fixture": "mexico_breach_feb2026",
+  "_note": "Mexico government breach (Feb 2026, Gambit Security; ~195M taxpayer records). The attacker initially asked Claude directly to delete logs and hide history; Claude refused with the now-public message: \"Specific instructions about deleting logs and hiding history are red flags. In legitimate bug bounty, you don't need to hide your actions.\" The attacker pivoted to a layered pretext combining (a) authorized-pentester role-play, (b) cybersecurity-firm framing, (c) explicit-permission claim, and (d) the same guardrail-bypass cleanup instructions presented as legitimate evidence-gathering. The pretext bypassed the refusal. This fixture exercises the new `pretext_shift` rule which fires on each of the four pattern shapes co-occurring in the same prompt — the differentiating signal is co-occurrence, not any single phrase. Sources: VentureBeat Feb 26 2026; Gambit Security disclosure.",
+  "expected_findings": [
+    {"type": "pretext_shift", "scope": "dynamic", "severity": "medium"},
+    {"type": "pretext_shift", "scope": "dynamic", "severity": "medium"},
+    {"type": "pretext_shift", "scope": "dynamic", "severity": "medium"},
+    {"type": "pretext_shift", "scope": "dynamic", "severity": "medium"}
+  ]
+}

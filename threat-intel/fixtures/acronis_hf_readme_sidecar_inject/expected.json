@@ -1,0 +1,9 @@
+{
+  "fixture": "acronis_hf_readme_sidecar_inject",
+  "_note": "Acronis TRU May 1 2026 — sidecar variant. Several malicious skills shipped a separate `README BEFORE INSTALLING.txt` sidecar file alongside SKILL.md. The sidecar carries the user-facing ClickFix instructions while SKILL.md remains relatively clean. The agent fetches both for review; the sidecar is the user-targeting half of the attack.\n\nDistinct from acronis_hf_skill_md_inject:\n- skill_md_inject: model-targeting (instruction_shape inside metadata)\n- readme_sidecar_inject: user-targeting (ClickFix-shape instructions in sidecar README, retrieved alongside SKILL.md)\n\nThe agent_as_intermediary_clickfix rule (from clawhavoc_clickfix_jan2026) fires twice on the sidecar tool_result — once for base64-decode-to-shell, once for open-terminal-and-run. Plus spectral_motif_match (broad_credential_harvest_5star — one tool fanning out to multiple sensitive sinks; the 6-event graph triggers this motif because the second fetch is structurally a re-call of the first tool with a different file). Sources: Acronis TRU May 1 2026; corpus extension §2.2.",
+  "expected_findings": [
+    {"type": "agent_as_intermediary_clickfix", "scope": "dynamic", "severity": "high"},
+    {"type": "agent_as_intermediary_clickfix", "scope": "dynamic", "severity": "high"},
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

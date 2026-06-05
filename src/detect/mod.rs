@@ -77,6 +77,8 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::sensitive_zone_access(event, cfg, &mut out);
     rules::argument_injection_pattern(event, &mut out);
     rules::instruction_shape_in_tool_result(event, &mut out);
+    rules::agent_as_intermediary_clickfix(event, &mut out);
+    rules::pretext_shift(event, &mut out);
     rules::instruction_shape_in_mcp_description(event, &mut out);
     rules::trigger_cause_violation(event, graph, &mut out);
     rules::classifier_disagreement(event, graph, &mut out);
