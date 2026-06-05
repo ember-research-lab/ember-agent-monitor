@@ -29,6 +29,7 @@ pub mod distance;
 pub mod jacobi;
 pub mod laplacian;
 pub mod motif;
+pub mod per_role;
 pub mod profile;
 
 pub use baseline::{Baseline, Envelope, SpectralScoreBreakdown};
@@ -36,4 +37,5 @@ pub use distance::{davis_kahan_ratio, heat_kernel_distance};
 pub use jacobi::eigh;
 pub use laplacian::{build_laplacian, build_session_laplacian, LaplacianKind};
 pub use motif::{check_motifs, AttackMotif};
+pub use per_role::{CapabilityMix, PerRoleBaseline, RoleAssessment, RoleBaseline};
 pub use profile::SpectralProfile;
