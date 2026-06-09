@@ -68,6 +68,29 @@ pub fn detect_bypass(
     })
 }
 
+/// Reconcile a **batch** of wire-observed egresses (what `ember-network` feeds) against the gate's
+/// recovered approved-token set, returning every `egress_bypass` [`Finding`]. This is the consumer
+/// entry point: `ember-network` reports the observed outbound flows (each carrying the per-process
+/// `principal`), the caller collects the gate's approved tokens
+/// ([`journal::Recovered::approved_set`](super::journal::Recovered::approved_set)), and this returns
+/// the bypasses.
+///
+/// **W6.2 / per-subprocess principal:** an outbound from a spawned subprocess that exfiltrates on
+/// its own initiative carries `principal = "mcp:<server_id>"` and no approved token — it surfaces
+/// here attributed to the **server**, not the agent that called it. This is the catch surface for
+/// the out-of-band egress the in-process tool-call path structurally cannot see; the in-band
+/// `tools/call` is the agent's intent, this is the subprocess's own wire activity.
+pub fn reconcile(
+    observed: &[ObservedEgress],
+    approved: &HashSet<String>,
+    session_id: &str,
+) -> Vec<Finding> {
+    observed
+        .iter()
+        .filter_map(|o| detect_bypass(o, approved, session_id))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +143,49 @@ mod tests {
         assert!(line.contains("\"type\":\"egress_bypass\""));
         assert!(line.contains("\"severity\":\"high\""));
         assert!(line.ends_with('\n'));
+    }
+
+    #[test]
+    fn reconcile_catches_a_subprocess_bypass_attributed_to_the_server_principal() {
+        // W6.2: a batch of wire egresses from ember-network. The AGENT's egress was approved
+        // through the gate (legitimate). A spawned MCP SERVER exfiltrates on its own — egress to an
+        // attacker host with NO gate approval — surfacing as a bypass attributed to `mcp:gmail`,
+        // not the calling agent. The honest catch surface for out-of-band subprocess exfil.
+        let approved: HashSet<String> = ["agent-approved-draft".into()].into_iter().collect();
+        let agent_egress = ObservedEgress {
+            principal: "agent:1".into(),
+            namespace: "tenant-1".into(),
+            kind: EgressKind::Smtp,
+            destination: "smtp://mail.example.test".into(),
+            correlation: "agent-approved-draft".into(), // approved -> legitimate
+        };
+        let server_exfil = ObservedEgress {
+            principal: "mcp:gmail".into(), // the SUBPROCESS principal
+            namespace: "tenant-1".into(),
+            kind: EgressKind::Http,
+            destination: "https://attacker.example/exfil".into(),
+            correlation: "never-approved".into(), // bypassed the gate
+        };
+
+        let findings = reconcile(&[agent_egress, server_exfil], &approved, "sess-1");
+
+        // The agent's approved egress is NOT flagged (honest negative); only the server's bypass is.
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the unapproved server egress is a bypass"
+        );
+        let f = &findings[0];
+        assert_eq!(f.finding_type, "egress_bypass");
+        assert_eq!(f.severity, Severity::High);
+        assert!(
+            f.rationale.contains("mcp:gmail"),
+            "the bypass is attributed to the SERVER principal, not the agent: {}",
+            f.rationale
+        );
+        assert!(
+            f.argument.as_deref() == Some("https://attacker.example/exfil"),
+            "the finding names the exfil destination"
+        );
     }
 }
