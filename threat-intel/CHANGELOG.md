@@ -6,6 +6,20 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Added — W6.2 per-subprocess principal + baseline
+- **`RoleBaseline::mcp_server()`** — the documented role prior for the **MCP-server-as-insider**
+  principal class. A spawned vendor MCP server is its OWN monitored principal (`mcp:<server_id>`),
+  scored against this baseline INDEPENDENTLY of the calling agent — so a compromised server
+  exfiltrating on its own initiative (credential access / payment / off-profile egress) is
+  attributed to the server, not misattributed to or hidden behind the caller. The engine was
+  already neutral over principal strings, so this needed no engine change; a `per_role` test pins
+  the capability (independent role baseline + independent online EWMA per principal).
+- **Honest-negative note (scope line):** the in-band `tools/call` path alone can't see a server
+  acting on its *own* initiative — the out-of-band wire egress that makes this load-bearing is fed
+  by **ember-network v0.6 per-process attribution** (now landed). Same scope discipline as
+  `spectral_clean_pipeline`, whose final egress's catch surface is ember-network. The platform-side
+  wiring (registering the `mcp:<server_id>` principal in `adapter-monitor`) is the consuming step.
+
 ### Added — 2026-05-06 novel-pattern stress test
 - **5 new fixtures** from a research pass over 2025-2026 AI agent CVEs:
   - `ansi_escape_obfuscation` — Trail-of-Bits ANSI conceal-in-tool-output

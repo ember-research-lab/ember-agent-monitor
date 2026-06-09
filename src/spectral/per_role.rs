@@ -101,6 +101,26 @@ pub struct RoleBaseline {
     pub mix: CapabilityMix,
 }
 
+impl RoleBaseline {
+    /// Baseline for the **MCP-server-as-insider** principal class (W6.2). A spawned vendor MCP
+    /// server is its OWN monitored principal — `mcp:<server_id>`, distinct from the agent that
+    /// calls it — so a compromised server exfiltrating *on its own initiative* is attributed to the
+    /// server, not misattributed to (or hidden behind) the caller. The engine is already neutral
+    /// over principal strings (see [`PerRoleBaseline`]); this is the documented role *prior* for
+    /// that class: a server's "normal" is its vendor-API egress, so credential access, payment, a
+    /// subprocess spawn, or egress to anything off-profile diverges and flags the server principal.
+    ///
+    /// The out-of-band egress that makes this load-bearing (the server's own wire traffic, not the
+    /// JSON-RPC it returns to the agent) is fed by **ember-network v0.6** per-process attribution —
+    /// the in-band `tools/call` path alone can't see a server acting on its own.
+    pub fn mcp_server() -> Self {
+        Self {
+            spectral: Baseline::default_baseline(),
+            mix: CapabilityMix::new().with("egress:normal", 1.0),
+        }
+    }
+}
+
 /// The breakdown of a per-role assessment — spectral shape deviation + capability-mix
 /// divergence, with a combined `total` (the caller thresholds it).
 #[derive(Debug, Clone)]
@@ -400,6 +420,67 @@ mod tests {
         assert!(
             d_poisoned > d_clean,
             "the poisoning guard must keep the attack anomalous: clean={d_clean:.3} poisoned={d_poisoned:.3}"
+        );
+    }
+
+    #[test]
+    fn a_subprocess_is_an_independent_principal_with_its_own_baseline() {
+        // W6.2: a spawned MCP server is its OWN monitored principal (`mcp:<server_id>`), scored
+        // against an `mcp-server` role baseline INDEPENDENTLY of the agent that called it. The
+        // engine is neutral over principal strings, so this needs no engine change — it locks in
+        // the capability + the documented role prior.
+        let mut e = engine();
+        e.set_role("mcp-server", RoleBaseline::mcp_server());
+
+        // The MCP server doing its normal vendor egress scores low against the mcp-server prior.
+        let server_normal = e.assess(
+            "mcp-server",
+            "mcp:gmail",
+            &profile(),
+            &mix(&[("egress:normal", 8.0)]),
+        );
+        assert!(
+            server_normal.mix_divergence < 0.5,
+            "vendor egress is normal for an MCP server: {:.3}",
+            server_normal.mix_divergence
+        );
+
+        // A COMPROMISED server exfiltrating on its OWN initiative (credential access + payment
+        // egress) scores HIGH — attributed to the SERVER principal, not the calling agent.
+        let server_insider = e.assess(
+            "mcp-server",
+            "mcp:gmail",
+            &profile(),
+            &mix(&[("cap:CredentialAccess", 4.0), ("egress:payment", 4.0)]),
+        );
+        assert!(
+            server_insider.mix_divergence > server_normal.mix_divergence + 1.0,
+            "a server exfiltrating on its own must flag the SERVER: normal={:.3} insider={:.3}",
+            server_normal.mix_divergence,
+            server_insider.mix_divergence
+        );
+
+        // Independence: learning the AGENT's behavior must NOT move the SERVER's score — separate
+        // online EWMA per principal. (Otherwise a server's anomaly could be masked by, or leak
+        // into, the agent's learned normal.)
+        let before = e.assess(
+            "mcp-server",
+            "mcp:gmail",
+            &profile(),
+            &mix(&[("egress:payment", 4.0)]),
+        );
+        for _ in 0..10 {
+            e.observe("agent:1", &mix(&[("egress:payment", 4.0)]), false);
+        }
+        let after = e.assess(
+            "mcp-server",
+            "mcp:gmail",
+            &profile(),
+            &mix(&[("egress:payment", 4.0)]),
+        );
+        assert!(
+            (before.mix_divergence - after.mix_divergence).abs() < 1e-9,
+            "the agent's learned behavior must not leak into the subprocess principal's baseline"
         );
     }
 }
