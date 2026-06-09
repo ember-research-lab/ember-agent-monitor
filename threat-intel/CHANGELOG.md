@@ -6,6 +6,18 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Added — W6.2/W6.3 bridge: batch egress-bypass reconciliation
+- **`egress::bypass::reconcile(observed, approved, session_id)`** — the consumer entry point that
+  reconciles a BATCH of wire-observed egresses (what ember-network feeds) against the gate's approved
+  correlation tokens, returning every `egress_bypass` finding. Plus `Recovered::approved_set()` (the
+  journal→set convenience) so the full path is: recover journal → `approved_set()` → `reconcile(observed
+  from ember-network)` → findings. Makes the previously pure-but-unwired bypass seam usable end-to-end.
+- **The correct W6.2 catch surface:** a spawned subprocess exfiltrating on its own initiative carries
+  `principal = "mcp:<server_id>"` and no approved token → an `egress_bypass` finding attributed to the
+  **server**, not the calling agent. This is the *out-of-band* egress the in-process tool-call path
+  structurally cannot see (the in-band `tools/call` is the agent's intent). Test pins it: a server's
+  exfil to an attacker host is flagged while the agent's gate-approved egress is not (honest negative).
+
 ### Added — W6.2 per-subprocess principal + baseline
 - **`RoleBaseline::mcp_server()`** — the documented role prior for the **MCP-server-as-insider**
   principal class. A spawned vendor MCP server is its OWN monitored principal (`mcp:<server_id>`),

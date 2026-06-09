@@ -31,6 +31,14 @@ pub struct Recovered {
     pub approved: Vec<String>,
 }
 
+impl Recovered {
+    /// The approved correlation tokens as a set — the exact input the egress-bypass detector
+    /// reconciles wire egress against ([`super::bypass::reconcile`]).
+    pub fn approved_set(&self) -> std::collections::HashSet<String> {
+        self.approved.iter().cloned().collect()
+    }
+}
+
 /// Append-only journal writer.
 pub struct EgressJournal {
     /// The append target. Boxed `dyn Write` (not a bare `File`) so the durable write
