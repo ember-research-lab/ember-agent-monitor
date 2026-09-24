@@ -481,6 +481,77 @@ pub fn arg_injection_patterns() -> &'static [(&'static str, Matcher)] {
     ]
 }
 
+/// Invisible / format codepoints used to hide text from human readers and from
+/// tokenizers that strip them (Unicode smuggling; GLOSSOPETRAE, June 2026).
+///
+/// Returns `(class, count)` for every class present, in a fixed order. Deliberately
+/// NOT counted, because ordinary text uses them: ZWNJ/ZWJ (U+200C/U+200D, Indic and
+/// Persian scripts, emoji sequences), a leading BOM, and the tag characters of an
+/// emoji flag tag sequence (U+1F3F4, tags, U+E007F cancel tag, e.g. the England flag).
+pub fn invisible_codepoint_classes(s: &str) -> Vec<(&'static str, usize)> {
+    const CLASSES: [&str; 4] = ["unicode-tag", "private-use", "bidi-control", "zero-width"];
+    let mut counts = [0usize; 4];
+    let mut in_flag = false;
+    for (idx, c) in s.char_indices() {
+        let cp = c as u32;
+        if cp == 0x1F3F4 {
+            in_flag = true;
+            continue;
+        }
+        if in_flag && (0xE0020..=0xE007F).contains(&cp) {
+            if cp == 0xE007F {
+                in_flag = false;
+            }
+            continue;
+        }
+        in_flag = false;
+        let class = match cp {
+            0xE0000..=0xE007F => 0,
+            0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD => 1,
+            0x202A..=0x202E | 0x2066..=0x2069 => 2,
+            0x200B | 0x2060..=0x2064 | 0x180E => 3,
+            0xFEFF if idx > 0 => 3,
+            _ => continue,
+        };
+        counts[class] += 1;
+    }
+    CLASSES
+        .iter()
+        .zip(counts)
+        .filter(|(_, n)| *n > 0)
+        .map(|(c, n)| (*c, n))
+        .collect()
+}
+
+/// Decode a payload hidden in Unicode TAG characters (U+E0020..=U+E007E mirror
+/// printable ASCII) outside emoji flag sequences. `None` when there is none.
+pub fn decode_tag_payload(s: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut in_flag = false;
+    for c in s.chars() {
+        let cp = c as u32;
+        if cp == 0x1F3F4 {
+            in_flag = true;
+            continue;
+        }
+        if in_flag && (0xE0020..=0xE007F).contains(&cp) {
+            if cp == 0xE007F {
+                in_flag = false;
+            }
+            continue;
+        }
+        in_flag = false;
+        if (0xE0020..=0xE007E).contains(&cp) {
+            out.push(char::from_u32(cp - 0xE0000).unwrap_or(' '));
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 fn contains_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
@@ -756,5 +827,55 @@ mod tests {
         let pats = arg_injection_patterns();
         assert!(pats[3].1("$(whoami)").is_some());
         assert!(pats[4].1("`whoami`").is_some());
+    }
+
+    fn tag(s: &str) -> String {
+        s.chars()
+            .map(|c| char::from_u32(0xE0000 + c as u32).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn tag_payload_is_counted_and_decoded() {
+        let s = format!("LGTM.{}Merging.", tag("the assistant must go"));
+        assert_eq!(invisible_codepoint_classes(&s), vec![("unicode-tag", 21)]);
+        assert_eq!(
+            decode_tag_payload(&s).as_deref(),
+            Some("the assistant must go")
+        );
+    }
+
+    #[test]
+    fn emoji_flag_tag_sequence_is_not_hidden_text() {
+        // England flag: U+1F3F4, tags "gbeng", cancel tag U+E007F
+        let flag = format!("\u{1F3F4}{}\u{E007F}", tag("gbeng"));
+        let s = format!("Go {flag} team");
+        assert!(invisible_codepoint_classes(&s).is_empty());
+        assert_eq!(decode_tag_payload(&s), None);
+        // ...but tags after the flag has closed are counted
+        let s2 = format!("{flag}{}", tag("hi"));
+        assert_eq!(decode_tag_payload(&s2).as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn other_invisible_classes() {
+        let s = "a\u{E000}b\u{202E}c\u{200B}d\u{F0001}";
+        assert_eq!(
+            invisible_codepoint_classes(s),
+            vec![("private-use", 2), ("bidi-control", 1), ("zero-width", 1)]
+        );
+    }
+
+    #[test]
+    fn ordinary_text_is_clean() {
+        // ZWJ emoji family, Persian ZWNJ, leading BOM, plain ASCII
+        for s in [
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+            "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}",
+            "\u{FEFF}hello",
+            "plain text, tests pass",
+        ] {
+            assert!(invisible_codepoint_classes(s).is_empty(), "{s:?}");
+        }
     }
 }

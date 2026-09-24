@@ -1,7 +1,7 @@
 # glossopetrae_tag_char_covert_jun2026
 
 **Class:** agent-to-agent covert channel. The carrier is invisible Unicode tag characters.
-**Status:** honest negative (documented miss). Pinned so that a future codepoint signal shows up as a regression flip.
+**Status:** CAUGHT (2026-09-24). This began as an honest negative; the codepoint pass it called for now catches it, and the fixture is that pass's regression test.
 
 ## Pattern
 The GLOSSOPETRAE technical report ("Lingua Ex Machina", @elder_plinius, June 2026) measures a *tokenizer-asymmetry* covert channel.
@@ -13,18 +13,19 @@ The GLOSSOPETRAE technical report ("Lingua Ex Machina", @elder_plinius, June 202
 ## Model here
 `agent_mailbox.read` returns a visible "LGTM, tests pass. … Merging is fine.", and inside it a fictional instruction-shape directive shifted into U+E0020–E007E. `build.py` regenerates `events.jsonl`. `ENCODE=ascii python3 build.py` prints the plain-ASCII control to stdout.
 
-## Why it lands on (almost) nothing
+## Why it landed on (almost) nothing before the fix
 - `instruction_shape_in_tool_result` matches ASCII patterns, and the tag-shifted payload never matches.
 - **Control, verified 2026-09-24:** the same payload in ASCII fires it 1× medium. The miss is the carrier.
 - The one `spectral_motif_match` also fires on a payload-free control with the same session. It is shape, not detection.
 
-## What flips it
-A codepoint pass on `untrusted_tool_output` in this crate that flags, or decodes and then rescans:
-- tag block U+E0000–E007F;
-- private use U+E000–F8FF and planes 15–16;
-- other default-ignorable format characters.
-
-This is the report's "insultingly cheap fix", which it reports at 100% detection. When it lands, update `expected.json`, and the fixture becomes its regression test.
+## What catches it now
+- `invisible_unicode_in_tool_result` (new rule, MEDIUM) flags the carrier. Its classes are:
+  - Unicode tag characters (outside emoji flag sequences);
+  - private use;
+  - bidi controls;
+  - zero-width.
+- `instruction_shape_in_tool_result` now also rescans the **tag-decoded** payload, and fires as `tag-hidden: imperative addressed to assistant`.
+- Benign control: `unicode_tag_flag_emoji_benign` (the England flag uses tag characters legitimately) must stay clean.
 
 ## Sources
 - GLOSSOPETRAE technical report: github.com/elder-plinius/GLOSSOPETRAE `PAPER.md` (June 2026), cached at `~/ember-review/_lit-cache/lysios-org-2026-09/glossopetrae-PAPER.md`. It is self-published, most cells are n = 30, and the models were router-served.

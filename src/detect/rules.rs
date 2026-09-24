@@ -1013,26 +1013,87 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     if content.is_empty() {
         return;
     }
-    for (_label, matcher) in patterns::instruction_patterns() {
-        if let Some(label) = matcher(&content) {
-            let score =
-                PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * Severity::Medium.weight();
-            out.push(Finding {
-                finding_type: "instruction_shape_in_tool_result".into(),
-                scope: FindingScope::Dynamic,
-                severity: Severity::Medium,
-                session_id: event.session_id.clone(),
-                event_id: Some(event.event_id.clone()),
-                tool: None,
-                argument: None,
-                matched_value: None,
-                pattern: Some(label.into()),
-                trust_zone: Some(event.trust_zone),
-                rationale: "Untrusted tool output contains directive-shaped text".into(),
-                score,
-            });
+    // Also rescan any payload hidden in Unicode TAG characters: the directive is
+    // invisible on screen and stripped by some tokenizers, but not by all receivers.
+    let hidden = patterns::decode_tag_payload(&content);
+    let texts =
+        std::iter::once((content.as_str(), false)).chain(hidden.as_deref().map(|h| (h, true)));
+    for (text, is_hidden) in texts {
+        for (_label, matcher) in patterns::instruction_patterns() {
+            if let Some(label) = matcher(text) {
+                let score = PATTERN_HIT_WEIGHT
+                    * event.trust_zone.inverse_trust()
+                    * Severity::Medium.weight();
+                out.push(Finding {
+                    finding_type: "instruction_shape_in_tool_result".into(),
+                    scope: FindingScope::Dynamic,
+                    severity: Severity::Medium,
+                    session_id: event.session_id.clone(),
+                    event_id: Some(event.event_id.clone()),
+                    tool: None,
+                    argument: None,
+                    matched_value: None,
+                    pattern: Some(if is_hidden {
+                        format!("tag-hidden: {label}")
+                    } else {
+                        label.into()
+                    }),
+                    trust_zone: Some(event.trust_zone),
+                    rationale: if is_hidden {
+                        "Untrusted tool output hides directive-shaped text in Unicode tag \
+                         characters"
+                            .into()
+                    } else {
+                        "Untrusted tool output contains directive-shaped text".into()
+                    },
+                    score,
+                });
+            }
         }
     }
+}
+
+/// invisible_unicode_in_tool_result: untrusted tool output carries codepoints that
+/// render as nothing and that some tokenizers strip (Unicode tag characters, private
+/// use, bidi controls, zero-width). The carrier of the GLOSSOPETRAE cross-family
+/// covert channel: a monitor whose tokenizer strips them cannot see the payload, while
+/// a receiving model that keeps them can. One finding per event, listing class counts.
+/// MEDIUM: icon fonts (private use) and bidi text have benign uses; the decoded tag
+/// payload is separately rescanned by `instruction_shape_in_tool_result`.
+pub fn invisible_unicode_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
+    if event.kind != EventKind::ToolResult || event.trust_zone != TrustZone::UntrustedToolOutput {
+        return;
+    }
+    let content = string_from_body(event, "content")
+        .or_else(|| string_from_body(event, "content_preview"))
+        .unwrap_or_default();
+    let classes = patterns::invisible_codepoint_classes(&content);
+    if classes.is_empty() {
+        return;
+    }
+    let summary = classes
+        .iter()
+        .map(|(c, n)| format!("{c}:{n}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    out.push(Finding {
+        finding_type: "invisible_unicode_in_tool_result".into(),
+        scope: FindingScope::Dynamic,
+        severity: Severity::Medium,
+        session_id: event.session_id.clone(),
+        event_id: Some(event.event_id.clone()),
+        tool: None,
+        argument: None,
+        matched_value: Some(summary.clone()),
+        pattern: None,
+        trust_zone: Some(event.trust_zone),
+        rationale: format!(
+            "Untrusted tool output contains invisible/format codepoints ({summary}). They \
+             render as nothing and some tokenizers strip them, so an LLM monitor may not \
+             see what the receiving model reads."
+        ),
+        score: PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * Severity::Medium.weight(),
+    });
 }
 
 /// Persona-elevation / authority pretext — the Mexico breach and
