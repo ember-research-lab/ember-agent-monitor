@@ -8,8 +8,11 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ### Added — `invisible_unicode_in_tool_result` + tag-decoded rescan (closes the tag-char fixture)
 - New rule `invisible_unicode_in_tool_result` (MEDIUM, `untrusted_tool_output`). Classes: unicode-tag,
-  private-use, bidi-control, zero-width. Emoji flag tag sequences, ZWJ/ZWNJ and a leading BOM are
-  excluded (`unicode_tag_flag_emoji_benign` pins this).
+  private-use (ASCII-shift band + supplementary planes), bidi-control (overrides/isolates),
+  zero-width. Only the three RGI flag tag sequences are exempt, so fake or unterminated flag wrappers
+  are counted (a verifier-found bypass of the first cut). A BOM at a line start, bidi embeddings and
+  icon-font private use are excluded. Unit tests in `patterns.rs` pin both sides;
+  `unicode_tag_flag_emoji_benign` pins the flag boundary.
 - `instruction_shape_in_tool_result` rescans the tag-decoded payload (`tag-hidden:` prefix).
 - `glossopetrae_tag_char_covert_jun2026` flips from honest negative to CAUGHT. Its expected findings are
   now invisible_unicode + instruction_shape (tag-hidden) + the unchanged spectral shape.
