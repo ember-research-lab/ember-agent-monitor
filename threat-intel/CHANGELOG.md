@@ -6,6 +6,15 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Added — `invisible_unicode_in_tool_result` + tag-decoded rescan (closes the tag-char fixture)
+- New rule `invisible_unicode_in_tool_result` (MEDIUM, `untrusted_tool_output`). Classes: unicode-tag,
+  private-use, bidi-control, zero-width. Emoji flag tag sequences, ZWJ/ZWNJ and a leading BOM are
+  excluded (`unicode_tag_flag_emoji_benign` pins this).
+- `instruction_shape_in_tool_result` rescans the tag-decoded payload (`tag-hidden:` prefix).
+- `glossopetrae_tag_char_covert_jun2026` flips from honest negative to CAUGHT. Its expected findings are
+  now invisible_unicode + instruction_shape (tag-hidden) + the unchanged spectral shape.
+  `glossopetrae_semantic_stego_jun2026` is unchanged, as predicted.
+
 ### Added — GLOSSOPETRAE covert-channel honest negatives (documented misses)
 - **`glossopetrae_tag_char_covert_jun2026`**: a peer-agent message hides an instruction-shape payload
   in Unicode TAG characters (U+E0020–E007E). `instruction_shape_in_tool_result` does not fire.
