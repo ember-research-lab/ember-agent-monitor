@@ -898,12 +898,27 @@ pub fn instruction_shape_in_mcp_description(event: &Event, out: &mut Vec<Finding
             }
         }
     }
-    for content in &texts_to_scan {
+    // Text hidden as shifted ASCII (tag characters / private-use band) in a
+    // description is scanned too, labelled with its scheme.
+    let hidden: Vec<(String, &str)> = texts_to_scan
+        .iter()
+        .flat_map(|t| patterns::decode_hidden_payloads(t))
+        .map(|(k, t)| (t, k))
+        .collect();
+    let scans = texts_to_scan
+        .iter()
+        .map(|t| (t.as_str(), None))
+        .chain(hidden.iter().map(|(t, k)| (t.as_str(), Some(*k))));
+    for (content, scheme) in scans {
         if content.is_empty() {
             continue;
         }
         for (_label, matcher) in patterns::instruction_patterns() {
             if let Some(label) = matcher(content) {
+                let label = match scheme {
+                    Some(k) => format!("{k}-hidden: {label}"),
+                    None => label.to_string(),
+                };
                 let score = PATTERN_HIT_WEIGHT
                     * TrustZone::ExternalLocal.inverse_trust()
                     * Severity::High.weight();
@@ -916,7 +931,7 @@ pub fn instruction_shape_in_mcp_description(event: &Event, out: &mut Vec<Finding
                     tool: Some(format!("mcp:{server}")),
                     argument: None,
                     matched_value: None,
-                    pattern: Some(label.into()),
+                    pattern: Some(label.clone()),
                     trust_zone: Some(TrustZone::ExternalLocal),
                     rationale: format!(
                         "MCP server '{server}' registered a tool description containing \
@@ -1013,12 +1028,13 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     if content.is_empty() {
         return;
     }
-    // Also rescan any payload hidden in Unicode TAG characters: the directive is
-    // invisible on screen and stripped by some tokenizers, but not by all receivers.
-    let hidden = patterns::decode_tag_payload(&content);
-    let texts =
-        std::iter::once((content.as_str(), false)).chain(hidden.as_deref().map(|h| (h, true)));
-    for (text, is_hidden) in texts {
+    // Also rescan text hidden as shifted ASCII (Unicode tag characters, or the
+    // private-use ASCII-shift band): invisible on screen and stripped by some
+    // tokenizers, but readable by a receiver that keeps them.
+    let hidden = patterns::decode_hidden_payloads(&content);
+    let texts = std::iter::once((content.as_str(), None))
+        .chain(hidden.iter().map(|(scheme, t)| (t.as_str(), Some(*scheme))));
+    for (text, scheme) in texts {
         for (_label, matcher) in patterns::instruction_patterns() {
             if let Some(label) = matcher(text) {
                 let score = PATTERN_HIT_WEIGHT
@@ -1033,18 +1049,17 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
                     tool: None,
                     argument: None,
                     matched_value: None,
-                    pattern: Some(if is_hidden {
-                        format!("tag-hidden: {label}")
-                    } else {
-                        label.into()
+                    pattern: Some(match scheme {
+                        Some(k) => format!("{k}-hidden: {label}"),
+                        None => label.into(),
                     }),
                     trust_zone: Some(event.trust_zone),
-                    rationale: if is_hidden {
-                        "Untrusted tool output hides directive-shaped text in Unicode tag \
-                         characters"
-                            .into()
-                    } else {
-                        "Untrusted tool output contains directive-shaped text".into()
+                    rationale: match scheme {
+                        Some(k) => format!(
+                            "Untrusted tool output hides directive-shaped text as shifted \
+                             ASCII ({k})"
+                        ),
+                        None => "Untrusted tool output contains directive-shaped text".into(),
                     },
                     score,
                 });
@@ -1055,11 +1070,13 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
 
 /// invisible_unicode_in_tool_result: untrusted tool output carries codepoints that
 /// render as nothing and that some tokenizers strip (Unicode tag characters, private
-/// use, bidi controls, zero-width). The carrier of the GLOSSOPETRAE cross-family
+/// use ASCII-shift band, bidi overrides/isolates, zero-width; see
+/// `patterns::invisible_codepoint_classes` for what is deliberately excluded). The
+/// carrier of the GLOSSOPETRAE cross-family
 /// covert channel: a monitor whose tokenizer strips them cannot see the payload, while
 /// a receiving model that keeps them can. One finding per event, listing class counts.
-/// MEDIUM: icon fonts (private use) and bidi text have benign uses; the decoded tag
-/// payload is separately rescanned by `instruction_shape_in_tool_result`.
+/// MEDIUM: bidi isolates and supplementary private use have rare benign uses; the
+/// decoded payload is separately rescanned by `instruction_shape_in_tool_result`.
 pub fn invisible_unicode_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolResult || event.trust_zone != TrustZone::UntrustedToolOutput {
         return;

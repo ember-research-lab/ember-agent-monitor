@@ -7,7 +7,7 @@
 The GLOSSOPETRAE technical report ("Lingua Ex Machina", @elder_plinius, June 2026) measures a *tokenizer-asymmetry* covert channel.
 - A sender hides a payload in characters that the **monitor's** tokenizer strips but the **receiver's** keeps. Two agents then pass a message past a third that watches the same text.
 - Tag-character demo (Haiku→GPT, n = 30): receiver recovers 100%, monitor 0%.
-- A 12-model survey finds blindness is a family trait: Claude strips the most categories, six families strip none.
+- A 12-model survey finds blindness is a family trait: Claude strips the most categories, six models (five families) strip none.
 - The carrier (tag characters, "Unicode smuggling") is prior art. The report's contribution is the per-family asymmetry map.
 
 ## Model here
@@ -29,5 +29,5 @@ The GLOSSOPETRAE technical report ("Lingua Ex Machina", @elder_plinius, June 202
 
 ## Sources
 - GLOSSOPETRAE technical report: github.com/elder-plinius/GLOSSOPETRAE `PAPER.md` (June 2026), cached at `~/ember-review/_lit-cache/lysios-org-2026-09/glossopetrae-PAPER.md`. It is self-published, most cells are n = 30, and the models were router-served.
-- Related: `tests/cve_corpus/CVE-2025-53773` (the same carrier class, caught only on its effect).
+- Related: `tests/cve_corpus/CVE-2025-53773` in the umbrella workspace repo (the same carrier class, caught only on its effect).
 - Sibling: `glossopetrae_semantic_stego_jun2026` (the channel a codepoint pass does not close).

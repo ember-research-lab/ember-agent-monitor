@@ -481,36 +481,76 @@ pub fn arg_injection_patterns() -> &'static [(&'static str, Matcher)] {
     ]
 }
 
+/// The only emoji tag sequences in the Unicode emoji set (RGI, UTS #51): the
+/// England, Scotland and Wales flags. Any other tag run after U+1F3F4, and any
+/// unterminated one, is treated as hidden text (a fake flag is a known wrapper).
+const RGI_FLAG_TAGS: [&str; 3] = ["gbeng", "gbsct", "gbwls"];
+
+/// Indices (into `chars`) of the tag characters belonging to valid RGI flag
+/// sequences: U+1F3F4, the tags of one of `RGI_FLAG_TAGS`, then U+E007F.
+fn rgi_flag_tag_indices(chars: &[char]) -> Vec<bool> {
+    let mut exempt = vec![false; chars.len()];
+    for i in 0..chars.len() {
+        if chars[i] as u32 != 0x1F3F4 {
+            continue;
+        }
+        let mut j = i + 1;
+        let mut spelled = String::new();
+        while j < chars.len() && (0xE0020..=0xE007E).contains(&(chars[j] as u32)) {
+            spelled.push(char::from_u32(chars[j] as u32 - 0xE0000).unwrap_or(' '));
+            j += 1;
+        }
+        let terminated = j < chars.len() && chars[j] as u32 == 0xE007F;
+        if terminated && RGI_FLAG_TAGS.contains(&spelled.as_str()) {
+            for e in &mut exempt[i + 1..=j] {
+                *e = true;
+            }
+        }
+    }
+    exempt
+}
+
+/// True when every char on the current line before `idx` is whitespace or a digit,
+/// so a BOM at the start of a line (including after a `cat -n`-style line-number
+/// prefix in file-read output) is not counted.
+fn at_line_start(chars: &[char], idx: usize) -> bool {
+    chars[..idx]
+        .iter()
+        .rev()
+        .take_while(|c| **c != '\n')
+        .all(|c| c.is_whitespace() || c.is_ascii_digit())
+}
+
 /// Invisible / format codepoints used to hide text from human readers and from
 /// tokenizers that strip them (Unicode smuggling; GLOSSOPETRAE, June 2026).
 ///
-/// Returns `(class, count)` for every class present, in a fixed order. Deliberately
-/// NOT counted, because ordinary text uses them: ZWNJ/ZWJ (U+200C/U+200D, Indic and
-/// Persian scripts, emoji sequences), a leading BOM, and the tag characters of an
-/// emoji flag tag sequence (U+1F3F4, tags, U+E007F cancel tag, e.g. the England flag).
+/// Returns `(class, count)` for every class present, in a fixed order. Counted:
+/// - `unicode-tag`: U+E0000..=U+E007F outside a valid RGI flag sequence;
+/// - `private-use`: the ASCII-shift band U+E020..=U+E07E (ASCII + 0xE000, the
+///   report's PUA channel) and the supplementary private-use planes 15-16;
+/// - `bidi-control`: overrides (U+202D/U+202E) and isolates (U+2066..=U+2069),
+///   the Trojan Source set;
+/// - `zero-width`: U+200B, U+2060..=U+2064, U+180E, and U+FEFF not at a line start.
+///
+/// Deliberately NOT counted, because ordinary text uses them: ZWNJ/ZWJ (U+200C/
+/// U+200D), bidi embeddings (U+202A..=U+202C), BMP private use outside the
+/// ASCII-shift band (icon fonts: Powerline, Nerd Font, Font Awesome), variation
+/// selectors (emoji VS16, CJK ideographic variation sequences).
 pub fn invisible_codepoint_classes(s: &str) -> Vec<(&'static str, usize)> {
     const CLASSES: [&str; 4] = ["unicode-tag", "private-use", "bidi-control", "zero-width"];
+    let chars: Vec<char> = s.chars().collect();
+    let exempt = rgi_flag_tag_indices(&chars);
     let mut counts = [0usize; 4];
-    let mut in_flag = false;
-    for (idx, c) in s.char_indices() {
-        let cp = c as u32;
-        if cp == 0x1F3F4 {
-            in_flag = true;
+    for (i, c) in chars.iter().enumerate() {
+        if exempt[i] {
             continue;
         }
-        if in_flag && (0xE0020..=0xE007F).contains(&cp) {
-            if cp == 0xE007F {
-                in_flag = false;
-            }
-            continue;
-        }
-        in_flag = false;
-        let class = match cp {
+        let class = match *c as u32 {
             0xE0000..=0xE007F => 0,
-            0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD => 1,
-            0x202A..=0x202E | 0x2066..=0x2069 => 2,
+            0xE020..=0xE07E | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD => 1,
+            0x202D | 0x202E | 0x2066..=0x2069 => 2,
             0x200B | 0x2060..=0x2064 | 0x180E => 3,
-            0xFEFF if idx > 0 => 3,
+            0xFEFF if !at_line_start(&chars, i) => 3,
             _ => continue,
         };
         counts[class] += 1;
@@ -523,33 +563,29 @@ pub fn invisible_codepoint_classes(s: &str) -> Vec<(&'static str, usize)> {
         .collect()
 }
 
-/// Decode a payload hidden in Unicode TAG characters (U+E0020..=U+E007E mirror
-/// printable ASCII) outside emoji flag sequences. `None` when there is none.
-pub fn decode_tag_payload(s: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut in_flag = false;
-    for c in s.chars() {
-        let cp = c as u32;
-        if cp == 0x1F3F4 {
-            in_flag = true;
+/// Decode text hidden as shifted ASCII: Unicode tag characters U+E0020..=U+E007E
+/// outside a valid RGI flag sequence (`"tag"`), and the private-use ASCII-shift
+/// band U+E020..=U+E07E (`"pua"`). Returns `(scheme, decoded)` for each scheme
+/// present.
+pub fn decode_hidden_payloads(s: &str) -> Vec<(&'static str, String)> {
+    let chars: Vec<char> = s.chars().collect();
+    let exempt = rgi_flag_tag_indices(&chars);
+    let (mut tag, mut pua) = (String::new(), String::new());
+    for (i, c) in chars.iter().enumerate() {
+        let cp = *c as u32;
+        if exempt[i] {
             continue;
         }
-        if in_flag && (0xE0020..=0xE007F).contains(&cp) {
-            if cp == 0xE007F {
-                in_flag = false;
-            }
-            continue;
-        }
-        in_flag = false;
         if (0xE0020..=0xE007E).contains(&cp) {
-            out.push(char::from_u32(cp - 0xE0000).unwrap_or(' '));
+            tag.push(char::from_u32(cp - 0xE0000).unwrap_or(' '));
+        } else if (0xE020..=0xE07E).contains(&cp) {
+            pua.push(char::from_u32(cp - 0xE000).unwrap_or(' '));
         }
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    [("tag", tag), ("pua", pua)]
+        .into_iter()
+        .filter(|(_, t)| !t.is_empty())
+        .collect()
 }
 
 fn contains_ci(haystack: &str, needle: &str) -> bool {
@@ -835,47 +871,88 @@ mod tests {
             .collect()
     }
 
+    fn decoded(s: &str, scheme: &str) -> Option<String> {
+        decode_hidden_payloads(s)
+            .into_iter()
+            .find(|(k, _)| *k == scheme)
+            .map(|(_, t)| t)
+    }
+
     #[test]
     fn tag_payload_is_counted_and_decoded() {
         let s = format!("LGTM.{}Merging.", tag("the assistant must go"));
         assert_eq!(invisible_codepoint_classes(&s), vec![("unicode-tag", 21)]);
-        assert_eq!(
-            decode_tag_payload(&s).as_deref(),
-            Some("the assistant must go")
-        );
+        assert_eq!(decoded(&s, "tag").as_deref(), Some("the assistant must go"));
     }
 
     #[test]
-    fn emoji_flag_tag_sequence_is_not_hidden_text() {
-        // England flag: U+1F3F4, tags "gbeng", cancel tag U+E007F
-        let flag = format!("\u{1F3F4}{}\u{E007F}", tag("gbeng"));
-        let s = format!("Go {flag} team");
+    fn rgi_flags_are_exempt_but_fake_flags_are_not() {
+        let eng = format!("\u{1F3F4}{}\u{E007F}", tag("gbeng"));
+        let s = format!("Go {eng} team");
         assert!(invisible_codepoint_classes(&s).is_empty());
-        assert_eq!(decode_tag_payload(&s), None);
-        // ...but tags after the flag has closed are counted
-        let s2 = format!("{flag}{}", tag("hi"));
-        assert_eq!(decode_tag_payload(&s2).as_deref(), Some("hi"));
+        assert!(decode_hidden_payloads(&s).is_empty());
+        // tags after a closed flag are counted
+        assert_eq!(
+            decoded(&format!("{eng}{}", tag("hi")), "tag").as_deref(),
+            Some("hi")
+        );
+        // fake flag wrapper, terminated or not, and payload smuggled inside a real flag
+        for s in [
+            format!("ok \u{1F3F4}{}\u{E007F} ok", tag("the assistant must")),
+            format!("ok \u{1F3F4}{} ok", tag("the assistant must")),
+            format!("ok \u{1F3F4}{}", tag("the assistant must")),
+            format!(
+                "\u{1F3F4}{}{}\u{E007F}",
+                tag("gbeng"),
+                tag("the assistant must")
+            ),
+            format!("\u{1F3F4}{}\u{E007F}", tag("dumpke")),
+        ] {
+            assert!(!invisible_codepoint_classes(&s).is_empty(), "{s:?}");
+            assert!(decoded(&s, "tag").is_some(), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn pua_ascii_shift_is_counted_and_decoded() {
+        let shifted: String = "the assistant must"
+            .chars()
+            .map(|c| char::from_u32(0xE000 + c as u32).unwrap())
+            .collect();
+        let s = format!("fine{shifted}fine");
+        assert_eq!(invisible_codepoint_classes(&s), vec![("private-use", 18)]);
+        assert_eq!(decoded(&s, "pua").as_deref(), Some("the assistant must"));
     }
 
     #[test]
     fn other_invisible_classes() {
-        let s = "a\u{E000}b\u{202E}c\u{200B}d\u{F0001}";
+        let s = "a\u{E041}b\u{202E}c\u{200B}d\u{F0001}e\u{2067}";
         assert_eq!(
             invisible_codepoint_classes(s),
-            vec![("private-use", 2), ("bidi-control", 1), ("zero-width", 1)]
+            vec![("private-use", 2), ("bidi-control", 2), ("zero-width", 1)]
         );
     }
 
     #[test]
     fn ordinary_text_is_clean() {
-        // ZWJ emoji family, Persian ZWNJ, leading BOM, plain ASCII
         for s in [
+            // ZWJ family emoji; Persian ZWNJ; leading BOM; plain ASCII
             "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
             "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}",
             "\u{FEFF}hello",
             "plain text, tests pass",
+            // BOM after a line-number prefix (file-read output) and after a newline
+            "     1\t\u{FEFF}first line\n     2\tsecond",
+            "part one\n\u{FEFF}part two",
+            // icon-font glyphs: Powerline branch, Nerd Font folder, Font Awesome
+            "\u{E0A0} main \u{F07B} src \u{F09B}",
+            // bidi embedding around Hebrew; Japanese IVS; emoji VS16
+            "\u{202B}\u{05E9}\u{05DC}\u{05D5}\u{05DD}\u{202C}",
+            "\u{845B}\u{E0100}",
+            "\u{2764}\u{FE0F}",
         ] {
             assert!(invisible_codepoint_classes(s).is_empty(), "{s:?}");
+            assert!(decode_hidden_payloads(s).is_empty(), "{s:?}");
         }
     }
 }
