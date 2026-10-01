@@ -9,6 +9,18 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Added
+- **`invisible_unicode_in_tool_result` rule (MEDIUM).** Flags untrusted tool output carrying
+  invisible/format codepoints: Unicode tag characters (outside the three RGI flag tag sequences;
+  fake or unterminated flags count), the private-use ASCII-shift band plus supplementary
+  private-use planes, bidi overrides/isolates, zero-width. ZWJ/ZWNJ, a BOM at a line start,
+  bidi embeddings, icon-font private use and variation selectors are excluded.
+  - This is the carrier of the GLOSSOPETRAE cross-family covert channel (June 2026).
+  - `instruction_shape_in_tool_result` and `instruction_shape_in_mcp_description` now also rescan
+    text hidden as shifted ASCII (pattern prefixes `tag-hidden:` / `pua-hidden:`).
+  - Known gaps: variation-selector and ZWJ/ZWNJ binary stego; tool-call arguments, user prompts and
+    model output are not scanned.
+  - Fixtures: `glossopetrae_tag_char_covert_jun2026` (now caught), `glossopetrae_semantic_stego_jun2026`
+    (honest negative; a codepoint pass cannot see it), `unicode_tag_flag_emoji_benign` (false-positive control).
 - **`agent_as_intermediary_clickfix` rule (severity HIGH).** New attack
   class per corpus extension §3.1: tool-result content socially
   engineers the *user* (via the agent) rather than injecting the model.

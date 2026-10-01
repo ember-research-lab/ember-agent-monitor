@@ -1,0 +1,7 @@
+{
+  "fixture": "unicode_tag_flag_emoji_benign",
+  "_note": "Benign control. Emoji flag tag sequences (U+1F3F4 + tags + U+E007F) and a ZWJ family emoji in untrusted tool output must NOT fire invisible_unicode_in_tool_result, and the tag-decoder must not rescan flag tags as a hidden payload. spectral_motif_match is the five-event session shape (the same as in the glossopetrae_* fixtures).",
+  "expected_findings": [
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}

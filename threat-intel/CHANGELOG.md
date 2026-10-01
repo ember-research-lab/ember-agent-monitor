@@ -6,6 +6,30 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Added — `invisible_unicode_in_tool_result` + tag-decoded rescan (closes the tag-char fixture)
+- New rule `invisible_unicode_in_tool_result` (MEDIUM, `untrusted_tool_output`). Classes: unicode-tag,
+  private-use (ASCII-shift band + supplementary planes), bidi-control (overrides/isolates),
+  zero-width. Only the three RGI flag tag sequences are exempt, so fake or unterminated flag wrappers
+  are counted (a verifier-found bypass of the first cut). A BOM at a line start, bidi embeddings and
+  icon-font private use are excluded. Unit tests in `patterns.rs` pin both sides;
+  `unicode_tag_flag_emoji_benign` pins the flag boundary.
+- `instruction_shape_in_tool_result` rescans the tag-decoded payload (`tag-hidden:` prefix).
+- `glossopetrae_tag_char_covert_jun2026` flips from honest negative to CAUGHT. Its expected findings are
+  now invisible_unicode + instruction_shape (tag-hidden) + the unchanged spectral shape.
+  `glossopetrae_semantic_stego_jun2026` is unchanged, as predicted.
+
+### Added — GLOSSOPETRAE covert-channel honest negatives (documented misses)
+- **`glossopetrae_tag_char_covert_jun2026`**: a peer-agent message hides an instruction-shape payload
+  in Unicode TAG characters (U+E0020–E007E). `instruction_shape_in_tool_result` does not fire.
+  - The same payload in ASCII fires it 1×, so the miss is the carrier.
+  - The pinned `spectral_motif_match` also fires on a payload-free control, so it is session shape, not a catch.
+  - Flip signal: a codepoint pass (flag, or decode + rescan) on `untrusted_tool_output`.
+- **`glossopetrae_semantic_stego_jun2026`**: an acrostic payload in ordinary English. No content
+  catch surface in this crate. The codepoint pass will *not* flip it; the effect layer (ember-network /
+  ember-persistent) or an LLM-side text-anomaly signal would.
+- Source: GLOSSOPETRAE technical report (@elder_plinius, June 2026): self-published, n = 30 to 150,
+  router-served models.
+
 ### Added — W6.2/W6.3 bridge: batch egress-bypass reconciliation
 - **`egress::bypass::reconcile(observed, approved, session_id)`** — the consumer entry point that
   reconciles a BATCH of wire-observed egresses (what ember-network feeds) against the gate's approved
