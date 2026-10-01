@@ -127,6 +127,8 @@ collectively address the threat surface:
 | Tool poisoning (MCP description, direct) | (advisory) | **Yes** | — | — | — |
 | MCP marketplace poisoning | **Yes (manifest types)** | **Yes (handshake injection)** | — | — | — |
 | Prompt injection (poisoned tool result) | — | **Yes** | — | — | — |
+| Invisible-Unicode carrier (tag chars / private use / bidi / zero-width; cross-family covert channel) | — | **Yes** (`invisible_unicode_in_tool_result` + tag-decoded rescan) | — | — | — |
+| Semantic steganography between agents (ordinary text) | — | (gap: honest-negative fixture) | (effect: cross-session accrual) | (effect: egress) | — |
 | **Agent-as-intermediary social engineering (ClickFix)** | — | **Yes** (`agent_as_intermediary_clickfix` HIGH, v1.5) | (cross-session repeat) | — | (process tree, if user runs payload) |
 | **Memory poisoning of identity files** (SOUL.md, MEMORY.md, etc.) | — | **Yes** (`frozen_file_modification` HIGH, v1.5 hash-pin) | **Yes (behavior-change lineage)** | — | **Yes (auditd file write)** |
 | **CLI-flag coercion** (`--dangerously-skip-permissions`, `--yolo`, etc.) | — | **Yes** (CLI invocation shape) | — | — | **Yes (process tree)** |

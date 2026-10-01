@@ -54,7 +54,8 @@ claude   # or your agent of choice
 - **v0 substrate** — HTTP proxy, file-watcher, append-only event log,
   trust-zone tagging, capability tagging, session graph.
 - **v0.5 rules** — sensitive_zone_access, argument_injection_pattern,
-  instruction_shape_in_tool_result, instruction_shape_in_mcp_description,
+  instruction_shape_in_tool_result (incl. tag-decoded hidden text),
+  invisible_unicode_in_tool_result, instruction_shape_in_mcp_description,
   trigger_cause_violation, classifier_disagreement,
   toxic_capability_composition, lethal_trifecta_reachability,
   high_risk_plugin_composition.
