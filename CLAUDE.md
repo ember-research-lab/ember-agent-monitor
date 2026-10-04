@@ -20,26 +20,18 @@ The **egress gate** (`src/egress/mod.rs`, merged in PR #2) is the step past
 pending a human decision, then resumes or cancels it — a neutral state
 machine (`principal` performs an `OutfacingAction` in a `namespace`). See
 `design/egress-gate.md` for why enforcement is consumer-side, not in the LLM
-proxy. Scaffold is state machine + tests; `net::proxy`/`store` wiring is TBD.
+proxy. Has durable held state (`PersistentEgressGate`, #6) + bypass
+`reconcile()` (#11); `net::proxy` wiring still TBD.
 
 ## Read the design docs in this order
-
-The documented read order (`README.md`, `design/README.md`):
 
 1. `design/ember-suite-overview.md` — the four-tool architecture + OSS/premium
    split. Read first: it explains *why* this tool's scope is what it is.
 2. `design/agent-monitor-spec.md` — the v1 spec (scope, trust zones, event
    schema, detection rules §4, intervention §5, constraints §10). The
    implementer's contract; modules cite its section numbers.
-3. `design/egress-gate.md` — the hold-and-resume gate design note.
-4. `docs/internal-threat-model.md` — disciplines on this tool's *own* code
-   (the substrate is trusted by assumption).
-5. `docs/session-graph-contract.md` — on-disk contract to persistent + network.
-6. `threat-intel/README.md` — the regression-fixture catalog + intel cadence.
-7. `design/runtime-abstraction.md` — v1.6 design: `RuntimeAdapter` layer
-   (Claude Code / OpenClaw / Hermes) above the `Protocol` enum. Design
-   only, pre-implementation; referenced by ember-presence's
-   `deploy/openclaw.json` runtime block.
+
+Then the rest per [`design/README.md`](design/README.md).
 
 ## Honest scope — quote the spec, don't overclaim
 
@@ -62,25 +54,15 @@ The spec is deliberate about what this tool is **not** (`agent-monitor-spec.md`
 Each gap names the Ember tool that covers it — keep them honest, and don't
 grow this tool into another tool's layer.
 
-## House rules (CI enforces — `.github/workflows/ci.yml`)
+## House rules — deltas from the workspace CLAUDE.md (CI: `.github/workflows/ci.yml`)
 
-CI matrix: `{ubuntu-latest, macos-latest} × {stable, 1.75}`. Every job runs:
-
-1. **Zero external dependencies.** `Cargo.toml [dependencies]` MUST be empty
-   — CI greps it and fails on any non-comment line. Every primitive (JSON,
-   SHA-256, HTTP parse, eigendecomposition, Laplacian) is in-repo. Security
-   premise (matches vetpkg), not style. New dep = threat-model update +
-   explicit justification (`CONTRIBUTING.md`).
-2. **`#![forbid(unsafe_code)]`** at crate root (`src/lib.rs`). No exceptions.
-3. **`fmt --check`, `clippy --all-targets --no-deps -- -D warnings`, `build`,
-   `test`** all clean (see Commands).
-4. Every structured output goes through the JSON writer (`to_json_string`),
-   never `format!`. Path-shaped values are normalized before any zone/
-   boundary check (substrate-required, spec §2).
-
-**Commit format:** conventional commits, `type(scope): description — detail`
-(types: `feat` `fix` `docs` `refactor` `test` `chore`; cf. `CONTRIBUTING.md`
-and the log, e.g. `feat(egress): … (#2)`).
+- **Zero deps:** `[dependencies]` empty (CI greps it) and `[dev-dependencies]`
+  empty too; every primitive is in-repo. New dep = threat-model update +
+  justification (`CONTRIBUTING.md`). `#![forbid(unsafe_code)]`, no exceptions.
+- Clippy runs `--all-targets --no-deps`; matrix `{ubuntu, macos} × {stable, 1.75}`.
+  No `cargo deny` (no `deny.toml`).
+- Structured output goes through the JSON writer (`to_json_string`), never
+  `format!`; path-shaped values are normalized before any zone check (spec §2).
 
 ## Fixture discipline
 
@@ -99,7 +81,7 @@ Two validation surfaces under `tests/fixtures/`, both kept green:
 counts match `expected.json` **exactly** — a dropped *or* unexpected finding
 is a red build, and a fixture missing `expected.json` errors rather than
 silently skipping. Adding a fixture is a one-directory drop, no test-code
-change. Currently 15 fixtures + a 5-session clean calibration corpus
+change. Currently 25 fixtures + a 5-session clean calibration corpus
 (`threat-intel/calibration/clean_corpus/`).
 
 **Honest-negative fixtures.** `spectral_clean_pipeline/` pins a case the
