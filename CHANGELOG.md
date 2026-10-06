@@ -8,6 +8,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+- CI: every job has `timeout-minutes` (whale-signal#258).
+
 ### Added
 - **`invisible_unicode_in_tool_result` rule (MEDIUM).** Flags untrusted tool output carrying
   invisible/format codepoints: Unicode tag characters (outside the three RGI flag tag sequences;
