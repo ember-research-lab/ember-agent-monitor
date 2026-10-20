@@ -99,6 +99,43 @@ fn jsonl_files(dir: &std::path::Path) -> Vec<PathBuf> {
     }
 }
 
+/// What the adapter does with a top-level Claude Code transcript field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldDisposition {
+    /// Copied into every event body under the given key.
+    Carried(&'static str),
+    /// Used to build the event (kind, session, message content) but not copied.
+    Consumed,
+    /// Deliberately not carried.
+    Dropped,
+}
+
+/// Every top-level transcript field the adapter has an opinion about. The
+/// `watcher_transcript` test fails if a sample record has a field missing
+/// here, so a new field must be carried or dropped on purpose (#30).
+pub const TRANSCRIPT_FIELDS: &[(&str, FieldDisposition)] = &[
+    ("agentId", FieldDisposition::Carried("agent_id")),
+    ("isSidechain", FieldDisposition::Carried("is_sidechain")),
+    ("uuid", FieldDisposition::Carried("uuid")),
+    ("type", FieldDisposition::Consumed),
+    ("message", FieldDisposition::Consumed),
+    ("sessionId", FieldDisposition::Consumed),
+    ("cwd", FieldDisposition::Consumed),
+    ("gitBranch", FieldDisposition::Consumed),
+    ("parentUuid", FieldDisposition::Dropped),
+    ("userType", FieldDisposition::Dropped),
+    ("version", FieldDisposition::Dropped),
+    ("timestamp", FieldDisposition::Dropped),
+    ("requestId", FieldDisposition::Dropped),
+    ("toolUseResult", FieldDisposition::Dropped),
+    ("isMeta", FieldDisposition::Dropped),
+    ("slug", FieldDisposition::Dropped),
+    ("permissionMode", FieldDisposition::Dropped),
+    ("promptId", FieldDisposition::Dropped),
+    ("entrypoint", FieldDisposition::Dropped),
+    ("sourceToolAssistantUUID", FieldDisposition::Dropped),
+];
+
 /// What one watched line turned into.
 pub enum LineOutcome {
     /// Events to record + analyze.
@@ -167,6 +204,16 @@ pub fn interpret_line(line: &str, seen: &mut std::collections::HashSet<String>) 
             ));
         }
         events.extend(crate::proto::anthropic::request_to_events(&req, &sid));
+        for (src, disp) in TRANSCRIPT_FIELDS {
+            let FieldDisposition::Carried(dst) = disp else {
+                continue;
+            };
+            if let Some(x @ (JsonValue::Str(_) | JsonValue::Bool(_))) = field(src) {
+                for ev in events.iter_mut() {
+                    ev.set_body_field(dst, x.clone());
+                }
+            }
+        }
         return LineOutcome::Events(events);
     }
     if ty.is_some() && field("kind").is_none() {

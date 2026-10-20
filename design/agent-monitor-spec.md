@@ -97,6 +97,11 @@ content_hash    SHA-256 prefix
 kind            enum (see below)
 ```
 
+Events derived from Claude Code transcripts also carry, in `body`, the additive attribution fields
+`agent_id` (transcript `agentId`, subagents only), `is_sidechain` (`isSidechain`) and `uuid` (record `uuid`),
+so downstream consumers (ember-persistent, the per-session subagent rules) can attribute an event to a
+subagent. `watcher::TRANSCRIPT_FIELDS` lists every transcript field as carried, consumed or deliberately dropped.
+
 ### Event kinds
 
 ```
