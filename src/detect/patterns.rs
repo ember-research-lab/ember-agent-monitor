@@ -747,6 +747,23 @@ fn shell_touches_claude_config(s: &str) -> bool {
     false
 }
 
+/// The whitespace-delimited tokens of a shell command that name a Claude
+/// config path (the provenance span for `claude-config-path`, #52). Quotes and
+/// shell punctuation around the path are trimmed.
+pub fn claude_config_spans(s: &str) -> Vec<&str> {
+    s.split_whitespace()
+        .filter(|t| shell_touches_claude_config(t))
+        .map(|t| {
+            t.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '"' | '\'' | ';' | '&' | '|' | '(' | ')' | '>' | '<' | '`'
+                )
+            })
+        })
+        .collect()
+}
+
 fn rm_rf_non_temp(seg: &str) -> bool {
     let Some((cmd, rest)) = stage_command(seg) else {
         return false;

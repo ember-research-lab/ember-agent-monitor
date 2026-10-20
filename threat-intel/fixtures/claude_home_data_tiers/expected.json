@@ -1,0 +1,31 @@
+{
+  "fixture": "claude_home_data_tiers",
+  "_note": "#53: .claude config (settings.json, skills/, projects/../settings.json) is sensitive_zone_access HIGH; the driver's own data (charters/, projects/ transcript) is MEDIUM; a workspace path is silent.",
+  "expected_findings": [
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "medium"
+    }
+  ]
+}
