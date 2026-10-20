@@ -81,7 +81,7 @@ Two validation surfaces under `tests/fixtures/`, both kept green:
 counts match `expected.json` **exactly** — a dropped *or* unexpected finding
 is a red build, and a fixture missing `expected.json` errors rather than
 silently skipping. Adding a fixture is a one-directory drop, no test-code
-change. Currently 25 fixtures + a 5-session clean calibration corpus
+change. Currently 31 fixtures + a 5-session clean calibration corpus
 (`threat-intel/calibration/clean_corpus/`).
 
 **Honest-negative fixtures.** `spectral_clean_pipeline/` pins a case the
@@ -107,6 +107,12 @@ cargo clippy --all-targets --no-deps -- -D warnings # CI bar
 ./target/release/ember-agent init                   # ~/.ember/agent-monitor/
 ./target/release/ember-agent daemon --mode warn     # proxy :9452 + file-watcher
 # point an agent at it:  export ANTHROPIC_BASE_URL=http://localhost:9452
+
+# replay a raw Claude Code transcript (pattern rules, no spectral layer)
+./target/release/ember-agent replay --transcript ~/.claude/projects/<proj>/<session>.jsonl
+
+# per-rule benign false-positive budget (#45): reads ~/.claude/projects, fails over budget
+cargo test --release --test benign_budget -- --ignored --nocapture
 
 # offline validation (Python, stdlib only); in-line: inline_proxy_server.py warn
 python3 tests/fixtures/proxy_emit.py tests/fixtures/session_cve_chain.jsonl > /tmp/events.jsonl

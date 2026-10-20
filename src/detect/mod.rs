@@ -82,7 +82,7 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     let mut out = Vec::new();
     let marker = cfg.posture.as_ref().and_then(|p| p.observe(event));
     rules::sensitive_zone_access(event, cfg, &mut out);
-    rules::argument_injection_pattern(event, &mut out);
+    rules::argument_injection_pattern(event, graph, &mut out);
     rules::instruction_shape_in_tool_result(event, &mut out);
     rules::invisible_unicode_in_tool_result(event, &mut out);
     rules::instruction_directive_in_tool_result(event, graph, &mut out);

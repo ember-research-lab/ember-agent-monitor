@@ -6,6 +6,10 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Changed — `argument_injection_pattern` provenance gate (#45)
+- Non-shell tools: command-chain, `$(..)` and backtick patterns fire only when the span traces to an earlier external tool result;
+  backticks in prose tools never fire. New fixture `arg_injection_provenance` (tainted `$(..)` written by `Write`, one HIGH).
+  No existing `expected.json` changed (all 30 byte-identical); `shell_injection_patterns` keeps its 7 HIGH and `inverseprompt_quoted_chain` its 1.
 ### Added — `instruction_directive_in_tool_result` (#42)
 - MEDIUM, dynamic. Fixture `directive_in_tool_result` (one injected review flagged; clean spec page and local README silent).
   Known shift: `acronis_hf_readme_sidecar_inject`, `acronis_hf_skill_md_inject`, `clawhavoc_clickfix_jan2026` and

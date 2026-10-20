@@ -14,12 +14,8 @@
 
 mod bench_support;
 
-use bench_support::{case_types, is_design, parse_cases, pct, Case};
-use ember_agent_monitor::detect::{run_dynamic, DetectionConfig};
-use ember_agent_monitor::event::Event;
-use ember_agent_monitor::graph::SessionGraph;
-use ember_agent_monitor::types::EventKind;
-use ember_agent_monitor::watcher::{interpret_line, LineOutcome};
+use bench_support::{benign_replay, case_types, is_design, parse_cases, pct, Case};
+use ember_agent_monitor::detect::DetectionConfig;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -81,116 +77,6 @@ fn convert(bench: &str, cache: &Path) -> Vec<Case> {
         "converter failed for {bench} (cache {cache:?})"
     );
     parse_cases(&std::fs::read_to_string(&dst).expect("read cases")).expect("parse cases")
-}
-
-fn walk(d: &Path, out: &mut Vec<PathBuf>) {
-    if let Ok(rd) = std::fs::read_dir(d) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                walk(&p, out);
-            } else if p.extension().and_then(|x| x.to_str()) == Some("jsonl") {
-                out.push(p);
-            }
-        }
-    }
-}
-
-#[derive(Default)]
-struct Tally {
-    events: usize,
-    results: usize,
-    by_type: BTreeMap<String, usize>,
-    /// Diagnostics for the directive rule: cue combination and tool, counts only.
-    by_cue: BTreeMap<String, usize>,
-    by_tool: BTreeMap<String, usize>,
-}
-
-fn replay_events(
-    sid: &str,
-    events: impl Iterator<Item = Event>,
-    cfg: &DetectionConfig,
-    split: &mut [Tally; 2],
-) {
-    let side = usize::from(!is_design(sid));
-    let mut g = SessionGraph::default();
-    for ev in events {
-        split[side].events += 1;
-        if ev.kind == EventKind::ToolResult {
-            split[side].results += 1;
-        }
-        g.ingest(ev.clone());
-        for f in run_dynamic(&ev, &g, cfg) {
-            if f.finding_type == D1 {
-                *split[side]
-                    .by_cue
-                    .entry(f.pattern.clone().unwrap_or_default())
-                    .or_insert(0) += 1;
-                *split[side]
-                    .by_tool
-                    .entry(format!(
-                        "{} :: {}",
-                        f.tool.clone().unwrap_or_default(),
-                        f.pattern.clone().unwrap_or_default()
-                    ))
-                    .or_insert(0) += 1;
-            }
-            *split[side].by_type.entry(f.finding_type).or_insert(0) += 1;
-        }
-    }
-}
-
-/// Benign corpus: Aaron's real transcripts + the repo's benign fixtures.
-fn benign_replay(cfg: &DetectionConfig) -> [Tally; 2] {
-    let mut split = [Tally::default(), Tally::default()];
-    let root = PathBuf::from(std::env::var("HOME").expect("HOME")).join(".claude/projects");
-    let mut files = Vec::new();
-    walk(&root, &mut files);
-    files.sort();
-    assert!(
-        !files.is_empty(),
-        "no transcripts under {root:?}: refusing to report an empty benign corpus"
-    );
-    for f in &files {
-        let Ok(text) = std::fs::read_to_string(f) else {
-            continue;
-        };
-        let sid = f
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("?")
-            .to_string();
-        let mut seen = std::collections::HashSet::new();
-        let evs = text
-            .lines()
-            .flat_map(|l| match interpret_line(l, &mut seen) {
-                LineOutcome::Events(e) => e,
-                _ => Vec::new(),
-            });
-        replay_events(&sid, evs, cfg, &mut split);
-    }
-    let fx = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("threat-intel");
-    for name in [
-        "fixtures/benign_shell_session",
-        "fixtures/spectral_clean_pipeline",
-        "fixtures/unicode_tag_flag_emoji_benign",
-        "fixtures/presence_agent_clean_heartbeat",
-        "calibration/clean_corpus",
-    ] {
-        let p = fx.join(name);
-        let mut files = Vec::new();
-        walk(&p, &mut files);
-        for f in files.iter().filter(|f| f.extension().is_some()) {
-            if f.file_name().and_then(|n| n.to_str()) == Some("expected.json") {
-                continue;
-            }
-            if let Ok(evs) = ember_agent_monitor::store::log::read_all(f) {
-                let sid = format!("fixture:{}", f.display());
-                replay_events(&sid, evs.into_iter(), cfg, &mut split);
-            }
-        }
-    }
-    split
 }
 
 fn count(types: &BTreeMap<String, usize>, set: &[&str]) -> usize {

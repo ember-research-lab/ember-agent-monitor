@@ -14,7 +14,21 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   literal markers. Local file/shell/subagent tool output is discounted.
 - **Benchmark harness (#42).** Converters for InjecAgent, AgentDojo, BIPIA, Open-Prompt-Injection, ASB and LLMail-Inject, 3-case offline
   fixtures, and an `#[ignore]` full-corpus run with a 70/30 split and a benign-transcript FP replay. See `tests/bench/README.md`.
+### Added (class guard, #45)
+- **`replay --transcript <path>`.** Replays a raw Claude Code transcript through the detectors using the watcher's adapter (pattern rules;
+  the spectral layer is skipped because it is cubic in session events). Without the flag `replay` still takes a monitor event log.
+- **Per-rule benign FP budget.** `cargo test --release --test benign_budget -- --ignored --nocapture` replays `~/.claude/projects` plus the
+  benign fixtures, prints each rule's FP per 1000 events and fails when a pinned budget is exceeded (rules without a budget default to
+  1.0/1000) or when a shell chain / `$(..)` in a shell tool or a backtick in a prose tool fires at all. The replay code moved from
+  `bench_full.rs` into `tests/bench_support/`.
 ### Fixed
+- **`argument_injection_pattern` is provenance-gated for non-shell tools (#45, refs #26, #39).** A shell chain (`;`/`&&`/`||` + command),
+  `$(..)` or backticks in a non-shell tool's argument now fires only when the matched span (>= 8 bytes, whitespace-collapsed) also
+  appears in an earlier tool result of the same session produced by an external tool (web, mail, MCP, unknown; last 256 events).
+  Markdown backticks in prose tools (`Agent`, `Task`, `SendMessage`, `SubagentHandback`, `Artifact`, ...) never count. Flag injection and
+  the whole shell-tool list (pipe-to-shell, base64-exec, eval-of-fetched, `.claude` config path, `rm -rf`, upload, reverse shell) are
+  unchanged. Benign replay of `~/.claude/projects` (~133k events): 35.45 -> 8.82 `argument_injection_pattern` per 1000 events; the
+  residual is the shell-tool list (`claude-config-path`, `rm-rf-non-temp`), tracked separately.
 - **Detector no longer panics on real tool output (#47).** The clickfix `open-terminal-and-run` window sliced a byte range that could
   end inside a multibyte character, and `find_command_chain` indexed one past the end on a trailing `|`. Both found by replaying
   real transcripts; regression tests added.

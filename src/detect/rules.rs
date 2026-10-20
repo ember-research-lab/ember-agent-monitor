@@ -374,12 +374,67 @@ fn webhook_blocklist_match(host: &str) -> Option<&'static str> {
     None
 }
 
+/// How many trailing events of the session graph are searched for the source
+/// of a shell-shaped argument span (#45). Same horizon as the tool-name
+/// lookup for results (`tool_name_for_result`).
+const TAINT_WINDOW_EVENTS: usize = 256;
+/// Spans shorter than this (whitespace-collapsed bytes) cannot establish
+/// provenance: `ls` or `date` appear in any output. A genuinely short
+/// injected payload is therefore not flagged by the shape gate (it is still
+/// caught by the shell-tool list and by the instruction-shape rules).
+const TAINT_MIN_SPAN: usize = 8;
+
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// True when `span` appears verbatim (whitespace-collapsed) in an earlier
+/// tool result of the session whose producing tool is third-party data
+/// (`directive::SourceClass::External`: web, mail, MCP, unknown). Results of
+/// the user's own workspace tools (Read/Bash/Grep...) are not taint sources:
+/// text the driver reads from its own repo and types back is its own.
+fn span_traces_to_external_result(span: &str, graph: &SessionGraph) -> bool {
+    let want = collapse_ws(span);
+    if want.len() < TAINT_MIN_SPAN {
+        return false;
+    }
+    graph
+        .dynamic_graph
+        .last_n(TAINT_WINDOW_EVENTS)
+        .iter()
+        .filter(|e| {
+            e.kind == EventKind::ToolResult && e.trust_zone == TrustZone::UntrustedToolOutput
+        })
+        .any(|e| {
+            let content = string_from_body(e, "content")
+                .or_else(|| string_from_body(e, "content_preview"))
+                .unwrap_or_default();
+            if !content.contains(want.split(' ').next().unwrap_or("")) {
+                return false;
+            }
+            let class = tool_name_for_result(e, graph)
+                .map_or(super::directive::SourceClass::External, |t| {
+                    super::directive::source_class(&t)
+                });
+            class == super::directive::SourceClass::External
+                && collapse_ws(&content).contains(&want)
+        })
+}
+
 /// Spec §4: argument_injection_pattern. Scans every string-typed value in
 /// the tool_call input map against the argument-injection pattern list.
 /// Tool-class aware (#26): shell tools (`Bash`, names containing `shell` or
 /// `exec`) use the shell list, where plain operators are not signals;
 /// every other tool keeps the flag/chain/substitution list.
-pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {
+///
+/// Provenance (#45): in the non-shell list, the three shell-shape patterns
+/// (`patterns::GATED_SHAPES`) fire only when the matched span also appears in
+/// an earlier external tool result of the same session (last
+/// `TAINT_WINDOW_EVENTS` events). Backticks in prose tools
+/// (`patterns::is_prose_tool`) never count. Flag injection, and everything in
+/// the shell-tool list (the genuinely dangerous shapes), keep their
+/// unconditional HIGH.
+pub fn argument_injection_pattern(event: &Event, graph: &SessionGraph, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolCall {
         return;
     }
@@ -388,7 +443,8 @@ pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {
         Some(JsonValue::Object(o)) => o.clone(),
         _ => return,
     };
-    let pattern_list = if patterns::is_shell_tool(&tool) {
+    let shell = patterns::is_shell_tool(&tool);
+    let pattern_list = if shell {
         patterns::shell_injection_patterns()
     } else {
         patterns::arg_injection_patterns()
@@ -400,6 +456,17 @@ pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {
         };
         for (_label, matcher) in pattern_list {
             if let Some(label) = matcher(&s) {
+                if !shell && patterns::GATED_SHAPES.contains(&label) {
+                    if label == "backtick command substitution" && patterns::is_prose_tool(&tool) {
+                        continue;
+                    }
+                    let tainted = patterns::shape_spans(label, &s)
+                        .into_iter()
+                        .any(|sp| span_traces_to_external_result(sp, graph));
+                    if !tainted {
+                        continue;
+                    }
+                }
                 // No trust-zone factor: the model's argument may itself be
                 // the product of an upstream prompt injection, so we treat
                 // this finding as model-emitted-regardless-of-context.
