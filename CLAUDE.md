@@ -113,6 +113,11 @@ cargo clippy --all-targets --no-deps -- -D warnings # CI bar
 
 # per-rule benign false-positive budget (#45): reads ~/.claude/projects, fails over budget
 cargo test --release --test benign_budget -- --ignored --nocapture
+# (#52-#54) also pins HIGH-only per-rule ceilings and a combined HIGH ceiling: the
+# warn-mode proxy goes in the driver's path only if benign HIGH noise stays low.
+# Severity decisions: claude-config-path HIGH iff is_sidechain or provenance, else
+# MEDIUM; sensitive_zone_access MEDIUM for .claude charters|memory|projects|worktrees,
+# HIGH otherwise (unlisted subdirs fail closed); multimodal only for External tools.
 
 # offline validation (Python, stdlib only); in-line: inline_proxy_server.py warn
 python3 tests/fixtures/proxy_emit.py tests/fixtures/session_cve_chain.jsonl > /tmp/events.jsonl

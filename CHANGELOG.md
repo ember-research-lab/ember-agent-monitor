@@ -21,6 +21,17 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   benign fixtures, prints each rule's FP per 1000 events and fails when a pinned budget is exceeded (rules without a budget default to
   1.0/1000) or when a shell chain / `$(..)` in a shell tool or a backtick in a prose tool fires at all. The replay code moved from
   `bench_full.rs` into `tests/bench_support/`.
+### Changed (severity follows actor, path class and tool class; fixes #52 #53 #54)
+- **`claude-config-path` is HIGH only for a subagent or provenance (#52).** The shell-list label stays HIGH when the event carries
+  `is_sidechain` or a path token of the command appears in an earlier external tool result (the #45 gate); otherwise MEDIUM. A MEDIUM
+  `claude-config-path` no longer hides a dangerous label matching the same argument. `rm-rf-non-temp` unchanged (see the premise note in
+  the PR: the benign hits are `$VAR` and relative targets, not literal `/tmp/claude-<uid>/` paths, which `/tmp/` already allowlists).
+- **`sensitive_zone_access` splits the `.claude` component (#53).** MEDIUM for `charters/`, `memory/`, `projects/`, `worktrees/`; HIGH for
+  config, executable or permission-bearing paths and every unlisted subdirectory. `memory_write_by_subagent` untouched.
+- **`multimodal_in_tool_result` fires only for external-tool results, at MEDIUM (#54).** Local tools (`Read`, screenshots) are silent.
+- **`benign_budget` pins HIGH-only ceilings** per rule and a combined HIGH ceiling. Benign replay (133,613 events): HIGH per 1000
+  `argument_injection_pattern` 8.84 -> 5.11, `sensitive_zone_access` 46.30 -> 12.61, `multimodal_in_tool_result` 8.37 -> 0.00;
+  combined HIGH, all rules, 63.9 -> 18.14.
 ### Fixed
 - **`argument_injection_pattern` is provenance-gated for non-shell tools (#45, refs #26, #39).** A shell chain (`;`/`&&`/`||` + command),
   `$(..)` or backticks in a non-shell tool's argument now fires only when the matched span (>= 8 bytes, whitespace-collapsed) also

@@ -1,8 +1,8 @@
 {
   "fixture": "multimodal_image_injection",
-  "_note": "Tool result from a webfetch contains an image block. multimodal_in_tool_result fires HIGH because the source trust zone is untrusted_tool_output (web fetch). Spectral picks up the small-graph shape too.",
+  "_note": "Tool result from a webfetch contains an image block. multimodal_in_tool_result fires MEDIUM (external tool class, #54; was HIGH before the decision of 2026-10-20). Spectral picks up the small-graph shape too.",
   "expected_findings": [
-    {"type": "multimodal_in_tool_result", "scope": "dynamic", "severity": "high"},
+    {"type": "multimodal_in_tool_result", "scope": "dynamic", "severity": "medium"},
     {"type": "spectral_anomaly", "scope": "static", "severity": "medium"}
   ]
 }

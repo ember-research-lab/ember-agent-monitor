@@ -125,7 +125,14 @@ environment; without it the watcher is the only view (no intervention, observe/w
   traces to an earlier external tool result. `ember-agent replay --transcript <file>`
   replays a raw Claude Code transcript; `cargo test --release --test benign_budget
   -- --ignored --nocapture` prints each rule's benign FP per 1000 events and fails
-  over the pinned budgets.
+  over the pinned budgets (all-severity and HIGH-only per rule, plus a combined
+  HIGH ceiling).
+  Severity follows actor, path class and tool class (#52-#54): `claude-config-path`
+  is HIGH only for a subagent (`is_sidechain`) or a path that traces to external
+  tool output, else MEDIUM; `sensitive_zone_access` is MEDIUM for the driver's own
+  `.claude` data (`charters/`, `memory/`, `projects/`, `worktrees/`) and HIGH for
+  config and anything executable or permission-bearing; `multimodal_in_tool_result`
+  fires only for external-tool results (web, mail, MCP, unknown), at MEDIUM.
 - **v2 spectral** — in-house Jacobi eigendecomposition, Laplacian
   builder, heat-kernel fingerprint, motif catalog (8 attack-shape
   graphs), spectral_anomaly + spectral_motif_match. Calibrated against

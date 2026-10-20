@@ -1,0 +1,36 @@
+{
+  "fixture": "claude_config_actor_severity",
+  "_note": "#52: claude-config-path is HIGH for a subagent actor or a path span that traces to an earlier external tool result (2 HIGH), MEDIUM for the driver reading its own settings.json (1). The three .claude config paths also trip sensitive_zone_access HIGH (#53). rm -rf under /tmp/claude-<uid>/ is silent.",
+  "expected_findings": [
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    }
+  ]
+}
