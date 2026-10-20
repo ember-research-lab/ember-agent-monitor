@@ -8,6 +8,10 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+- **`instruction_directive_in_tool_result` (MEDIUM, #42).** Scores untrusted tool output for *directive shape* (request verb plus
+  first-person or destination cues, override of earlier instructions, role claims, concealment, tool-invocation requests) instead of
+  literal markers. Local file/shell/subagent tool output is discounted.
 ### Fixed
 - **`argument_injection_pattern` no longer fires HIGH on benign shell commands (#26).** The rule is tool-class
   aware: shell tools (`Bash`, names containing `shell`/`exec`) get their own pattern list (pipe-to-shell,
