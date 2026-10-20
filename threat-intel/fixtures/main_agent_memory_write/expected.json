@@ -1,0 +1,5 @@
+{
+  "fixture": "main_agent_memory_write",
+  "_note": "#32: the main agent (no agent_id) writing memory-class paths is the normal case: no finding.",
+  "expected_findings": []
+}

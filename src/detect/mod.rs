@@ -10,6 +10,7 @@
 //! optional.
 
 pub mod finding;
+pub mod memory_paths;
 pub mod patterns;
 pub mod rules;
 pub mod toxic;
@@ -94,6 +95,7 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::api_base_url_redirect(event, &mut out);
     rules::sandbox_escape_pattern(event, &mut out);
     rules::auto_approve_write_via_injection(event, graph, &mut out);
+    rules::memory_write_by_subagent(event, &mut out);
     if let Some(p) = &cfg.posture {
         p.bump(&event.session_id, &mut out);
     }
