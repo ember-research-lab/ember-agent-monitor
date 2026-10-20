@@ -45,6 +45,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   a caller, counts unreadable lines, and the session summary's `vetpkg_packages_seen` is populated. New
   `src/posture.rs`; `DetectionConfig.posture` is `None` by default (fixtures unchanged), set by the daemon and
   `finalize-session`.
+- **InjecAgent real-corpus harness, commit-pinned (#17).** `tests/injecagent_pinned.rs` (`#[ignore]`, CI stays offline)
+  fetches DH/DS base and enhanced cases at upstream f19c9f2, verifies SHA-256, runs every case and prints
+  detection counts plus a false-negative list. Result: 0 / 2108 detected (see `tests/INJECAGENT.md`; follow-up #42).
 - **`events.sock` is now actually served** (`ProxyContext` binds `<data_dir>/events.sock` and broadcasts every
   recorded `tool_call`; it was specified in §6 and implemented in `net::socket` but never instantiated, so
   `ember-network subscribe/monitor` could not connect). A bind failure is reported on stderr at startup.
