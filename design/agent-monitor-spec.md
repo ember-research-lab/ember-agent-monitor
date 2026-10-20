@@ -35,7 +35,7 @@ The monitor is two cooperating processes plus a shared substrate:
 
 **API proxy.** Local HTTP server, default port `9452`. Speaks the Anthropic and OpenAI-compatible protocols upstream. Users point their agent at `localhost:9452` via standard env vars (`ANTHROPIC_BASE_URL`, `OPENAI_API_BASE`). The proxy intercepts requests in both directions, runs detection, optionally intervenes, and forwards or substitutes responses.
 
-**File-watcher.** Watches `~/.claude/projects/<hash>/sessions/*.jsonl` (and equivalent paths for other agent runtimes). Reads session metadata, MCP server registrations, subagent parent-child relationships, and other static-graph data that doesn't flow through the API.
+**File-watcher.** Watches `~/.claude/projects/<hash>/sessions/*.jsonl` as specified; Claude Code's actual layout is `<hash>/<session>.jsonl` and `<hash>/<session>/subagents/agent-*.jsonl`, both watched too (and equivalent paths for other agent runtimes). Reads session metadata, MCP server registrations, subagent parent-child relationships, and other static-graph data that doesn't flow through the API.
 
 Both processes write to a shared SQLite store. Each process runs detection independently against the data it sees; findings from both feed the same per-session findings table.
 
