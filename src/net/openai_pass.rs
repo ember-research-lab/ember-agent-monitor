@@ -42,7 +42,7 @@ const ECHO_HEADER: &str = "X-Ember-Session";
 
 /// Handle the request if it is one of this module's routes; `false` = not ours.
 pub fn route(req: &HttpRequest, ctx: &ProxyContext, out: &mut TcpStream) -> bool {
-    match (req.method.as_str(), req.path.as_str()) {
+    match (req.method.as_str(), crate::proto::path_only(&req.path)) {
         ("GET", "/openai/health") => relay_get(req, ctx, "/health", out),
         ("GET", "/openai/props") => relay_get(req, ctx, "/props", out),
         ("POST", p) if Protocol::for_path(p) == Some(Protocol::OpenAI) => post(req, ctx, out),

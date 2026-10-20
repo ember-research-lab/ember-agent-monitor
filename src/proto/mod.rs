@@ -63,6 +63,11 @@ pub enum Protocol {
     OpenAI,
 }
 
+/// The URI path of a request target, without any `?query` (or `#fragment`).
+pub fn path_only(target: &str) -> &str {
+    target.split(['?', '#']).next().unwrap_or(target)
+}
+
 impl Protocol {
     /// Stable string id for telemetry and config keys.
     pub fn id(&self) -> &'static str {
@@ -79,7 +84,12 @@ impl Protocol {
     /// don't collide on `/v1`. The user configures their client with
     /// the corresponding base URL — e.g.
     /// `OPENAI_BASE_URL=http://127.0.0.1:9452/openai/v1`.
+    ///
+    /// Routing is on the URI path only: a query string (Claude Code sends
+    /// `/v1/messages?beta=true`) is ignored here and preserved by
+    /// [`Protocol::upstream_path`] (#58).
     pub fn for_path(path: &str) -> Option<Protocol> {
+        let path = path_only(path);
         // Conservative: only accept exact known endpoints. New endpoints
         // require an explicit code change here, not a permissive wildcard.
         if path == "/v1/messages" {
@@ -93,14 +103,21 @@ impl Protocol {
 
     /// Health/status routes that bypass the protocol layer entirely.
     pub fn is_health_path(path: &str) -> bool {
-        matches!(path, "/health" | "/status")
+        matches!(path_only(path), "/health" | "/status")
     }
 
     /// Upstream URL suffix for forwarding. The proxy concatenates this
     /// onto the configured upstream base for this protocol.
+    ///
+    /// The query string of the original request is forwarded unchanged.
     pub fn upstream_path(&self, request_path: &str) -> String {
         match self {
-            Protocol::Anthropic => "/v1/messages".to_string(),
+            Protocol::Anthropic => {
+                format!(
+                    "/v1/messages{}",
+                    &request_path[path_only(request_path).len()..]
+                )
+            }
             Protocol::OpenAI => {
                 // Strip the local `/openai` prefix; the upstream
                 // (api.openai.com, api.x.ai, etc.) doesn't have it.
@@ -209,6 +226,33 @@ mod tests {
         assert_eq!(
             Protocol::for_path("/openai/v1/responses"),
             Some(Protocol::OpenAI)
+        );
+    }
+
+    #[test]
+    fn for_path_ignores_query_string() {
+        assert_eq!(
+            Protocol::for_path("/v1/messages?beta=true"),
+            Some(Protocol::Anthropic)
+        );
+        assert_eq!(
+            Protocol::for_path("/openai/v1/chat/completions?x=1"),
+            Some(Protocol::OpenAI)
+        );
+        assert_eq!(Protocol::for_path("/v1/messages/../?beta=true"), None);
+        assert_eq!(Protocol::for_path("/v1/messagesX?beta=true"), None);
+        assert!(Protocol::is_health_path("/health?x=1"));
+    }
+
+    #[test]
+    fn upstream_path_preserves_query() {
+        assert_eq!(
+            Protocol::Anthropic.upstream_path("/v1/messages?beta=true"),
+            "/v1/messages?beta=true"
+        );
+        assert_eq!(
+            Protocol::OpenAI.upstream_path("/openai/v1/chat/completions?x=1"),
+            "/v1/chat/completions?x=1"
         );
     }
 
