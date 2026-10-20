@@ -31,6 +31,7 @@ pub mod integrate;
 pub mod integrity;
 pub mod json;
 pub mod net;
+pub mod posture;
 pub mod proto;
 pub mod spectral;
 pub mod store;

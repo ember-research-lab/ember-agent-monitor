@@ -34,6 +34,14 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   transcript's `agentId` / `isSidechain` / `uuid`, so persistent and the per-session rules can attribute events
   to a subagent. `watcher::TRANSCRIPT_FIELDS` records every transcript field as carried, consumed or dropped;
   a test fails on an unlisted field.
+- **Session posture from sibling findings (#27, #31).** `~/.ember/vetpkg/findings.jsonl` (a WARN-or-higher package
+  installed or imported in the session), `~/.ember/persistent/findings.jsonl` (HIGH finding for the session's
+  workspace; schema v2 only, others refused and counted loudly) and `~/.ember/network/findings.jsonl` (HIGH
+  finding for the session) raise the session's posture: exec and egress rule findings bump one severity step and
+  one MEDIUM `posture_elevated` marker (source file + reason) is emitted once. `integrate::VetpkgFindings` now has
+  a caller, counts unreadable lines, and the session summary's `vetpkg_packages_seen` is populated. New
+  `src/posture.rs`; `DetectionConfig.posture` is `None` by default (fixtures unchanged), set by the daemon and
+  `finalize-session`.
 - **`events.sock` is now actually served** (`ProxyContext` binds `<data_dir>/events.sock` and broadcasts every
   recorded `tool_call`; it was specified in §6 and implemented in `net::socket` but never instantiated, so
   `ember-network subscribe/monitor` could not connect). A bind failure is reported on stderr at startup.
