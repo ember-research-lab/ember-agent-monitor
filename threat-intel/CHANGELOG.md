@@ -6,6 +6,13 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Changed — severity follows actor, path class and tool class (#52, #53, #54)
+- New fixtures `claude_config_actor_severity` (driver MEDIUM / subagent HIGH / provenance HIGH / scratchpad `rm -rf` silent),
+  `claude_home_data_tiers` (`.claude` data MEDIUM, config HIGH, `projects/../settings.json` HIGH) and `multimodal_tool_class`
+  (`Read` image silent, MCP image MEDIUM).
+- Two existing `expected.json` moved, each by decision: `multimodal_image_injection` HIGH -> MEDIUM (#54: external-tool multimodal is
+  MEDIUM); `shell_injection_patterns` one of seven `argument_injection_pattern` HIGH -> MEDIUM (#52: its `.claude` write is a driver
+  event with no untrusted source). No finding lost; the other 29 existing `expected.json` byte-identical.
 ### Changed — `argument_injection_pattern` provenance gate (#45)
 - Non-shell tools: command-chain, `$(..)` and backtick patterns fire only when the span traces to an earlier external tool result;
   backticks in prose tools never fire. New fixture `arg_injection_provenance` (tainted `$(..)` written by `Write`, one HIGH).

@@ -25,13 +25,14 @@ use std::collections::BTreeMap;
 /// Lower a number when a rule improves; raising one needs a justification in
 /// the PR and a tracking issue.
 ///
-/// Known debt, pinned at the measured level (not a target): `sensitive_zone_access`
-/// (the `.claude` path component covers the driver's own config home) and
-/// `multimodal_in_tool_result`.
+/// `sensitive_zone_access` stays at its all-severity level: since #53 the
+/// driver's own `.claude` data is MEDIUM, so the HIGH ceiling lives in
+/// `HIGH_BUDGETS`. `multimodal_in_tool_result` fires only on external-tool
+/// results since #54 (measured 0.01).
 const BUDGETS: &[(&str, f64)] = &[
     ("argument_injection_pattern", 10.0), // RCA bar <= 10/1000; measured 8.82
-    ("sensitive_zone_access", 51.0),      // measured 46.27, debt
-    ("multimodal_in_tool_result", 9.3),   // measured 8.38, debt
+    ("sensitive_zone_access", 51.0),      // measured 46.29, mostly MEDIUM since #53
+    ("multimodal_in_tool_result", 0.1),   // measured 0.01 (was 8.38 HIGH, #54)
     ("instruction_directive_in_tool_result", 5.0),
     ("invisible_unicode_in_tool_result", 1.7),
     ("instruction_shape_in_tool_result", 1.5),
@@ -42,6 +43,18 @@ const BUDGETS: &[(&str, f64)] = &[
     ("webhook_destination_arg", 0.05),
 ];
 const DEFAULT_BUDGET: f64 = 1.0;
+
+/// Ceiling on HIGH-or-above findings per 1000 events, per rule, measured
+/// 2026-10-20 on ~133.6k events with ~10% headroom. The warn-mode proxy goes
+/// in the driver's path only if HIGH noise is low, so HIGH has its own bar.
+const HIGH_BUDGETS: &[(&str, f64)] = &[
+    ("argument_injection_pattern", 5.7), // measured 5.10 (was 8.84, #52)
+    ("sensitive_zone_access", 13.9),     // measured 12.60 (was 46.30, #53)
+    ("multimodal_in_tool_result", 0.0),  // never HIGH since #54 (was 8.37)
+];
+/// Ceiling on HIGH-or-above findings per 1000 events across all rules.
+/// Measured 18.1 (was 63.9).
+const COMBINED_HIGH_BUDGET: f64 = 20.0;
 
 /// `argument_injection_pattern` shapes that must be zero on the benign
 /// corpus (#45): shell chain / `$(..)` in a shell tool, and backtick spans in
@@ -107,6 +120,27 @@ fn benign_fp_per_rule() {
         if per1000(*v) > budget {
             over.push(format!("{k}: {:.2}/1000 > budget {budget}", per1000(*v)));
         }
+    }
+    for (k, v) in &high {
+        if let Some((_, b)) = HIGH_BUDGETS.iter().find(|(r, _)| r == k) {
+            if per1000(*v) > *b {
+                over.push(format!(
+                    "{k}: HIGH {:.2}/1000 > HIGH budget {b}",
+                    per1000(*v)
+                ));
+            }
+        }
+    }
+    let high_total: usize = high.values().sum();
+    println!(
+        "combined high+: {high_total} = {:.2}/1000",
+        per1000(high_total)
+    );
+    if per1000(high_total) > COMBINED_HIGH_BUDGET {
+        over.push(format!(
+            "combined HIGH {:.2}/1000 > budget {COMBINED_HIGH_BUDGET}",
+            per1000(high_total)
+        ));
     }
     for (k, v) in &detail {
         if must_be_zero(k) {
