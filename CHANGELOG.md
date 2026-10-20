@@ -8,6 +8,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+- **Benchmark harness (#42).** Converters for InjecAgent, AgentDojo, BIPIA, Open-Prompt-Injection, ASB and LLMail-Inject, 3-case offline
+  fixtures, and an `#[ignore]` full-corpus run with a 70/30 split and a benign-transcript FP replay. See `tests/bench/README.md`.
 ### Fixed
 - **Detector no longer panics on real tool output (#47).** The clickfix `open-terminal-and-run` window sliced a byte range that could
   end inside a multibyte character, and `find_command_chain` indexed one past the end on a trailing `|`. Both found by replaying
