@@ -68,6 +68,16 @@ impl ProxyContext {
         if let Ok(b) = crate::spectral::Baseline::load(&user_baseline) {
             detection.spectral_baseline = Some(b);
         }
+        // Session posture reads the sibling tools' findings next to our data
+        // dir (`~/.ember/{vetpkg,persistent,network}`).
+        match config.data_dir.parent() {
+            Some(root) => {
+                detection.posture = Some(Arc::new(crate::posture::SessionPosture::new(root)))
+            }
+            None => eprintln!(
+                "ember-agent: posture off — data dir has no parent to find sibling findings"
+            ),
+        }
         let sock_path = config.data_dir.join("events.sock");
         let events_sock = match crate::net::socket::EventSocket::open(&sock_path) {
             Ok(s) => Some(s),
@@ -150,6 +160,9 @@ impl ProxyContext {
         let event_log_path = self.store.session_log_path(session_id);
         let mut summary =
             SessionSummary::build(session_id, &graph, &findings, fidelity, &event_log_path);
+        if let Some(p) = &self.detection.posture {
+            summary = summary.with_vetpkg_packages(p.packages_seen(session_id));
+        }
         // Add spectral summary if we computed one (cheap because the graph
         // is already in hand here).
         let profile = crate::spectral::SpectralProfile::from_session(&graph);

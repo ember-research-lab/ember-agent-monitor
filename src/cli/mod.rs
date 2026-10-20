@@ -513,7 +513,13 @@ fn finalize_one(store: &crate::store::Store, session_id: &str) -> Result<PathBuf
     if !log_path.exists() {
         return Err(format!("no session log at {}", log_path.display()));
     }
-    let detection_cfg = crate::detect::DetectionConfig::default();
+    let mut detection_cfg = crate::detect::DetectionConfig::default();
+    // Same sibling-findings posture as the live daemon (`~/.ember/...`).
+    if let Some(root) = store.base_dir().parent() {
+        detection_cfg.posture = Some(std::sync::Arc::new(crate::posture::SessionPosture::new(
+            root,
+        )));
+    }
     // Replay events into a graph, run detection, build + write the summary.
     let events = crate::store::log::read_all(&log_path)?;
     let mut graph = crate::graph::SessionGraph::default();
@@ -528,6 +534,9 @@ fn finalize_one(store: &crate::store::Store, session_id: &str) -> Result<PathBuf
         crate::types::FidelityStatus::FullFidelity,
         &log_path,
     );
+    if let Some(p) = &detection_cfg.posture {
+        summary = summary.with_vetpkg_packages(p.packages_seen(&session_id));
+    }
     let profile = crate::spectral::SpectralProfile::from_session(&graph);
     if profile.n_nodes >= 3 {
         let breakdown = detection_cfg

@@ -230,7 +230,13 @@ After 5 consecutive blocks within a session, the monitor pauses interception and
 
 ### Inputs to the agent monitor
 
-**vetpkg findings.** vetpkg writes its install-time risk scores to `~/.ember/vetpkg/findings.jsonl`. The agent monitor reads this at session start. Sessions with packages flagged by vetpkg get elevated detection sensitivity. Read-only consumption; no shared state.
+**Session posture (sibling findings).** Three files under `~/.ember/` (the parent of the monitor's data dir) raise a session's *posture*; implemented in `src/posture.rs`, read-only, no shared state. Each file is re-checked on every observed event and re-read when it changes:
+
+- `vetpkg/findings.jsonl` (`package, ecosystem, severity, reason, version, score, ts_ms`): a WARN-or-higher (`medium`+) package that a tool_call in this session installs (`npm|pnpm|yarn|bun|pip|uv|cargo|gem|go ... install|add|get <pkg>`) or imports raises posture. The summary's `vetpkg_packages_seen` lists the matched `name@version`.
+- `persistent/findings.jsonl` (schema_version 2 only): a `high`+ finding whose `workspace` equals this session's workspace hash (sha256 of the normalised `cwd`, 16 hex chars, as ember-persistent computes it). Lines with a missing or other `schema_version` are refused and counted; so are unparseable lines. Both are reported on stderr whenever the counts change (`LoadReport`).
+- `network/findings.jsonl` (the monitor's own finding shape, ember-network `docs/wire-contract.md`): a `high`+ finding whose `session_id` is this session. Findings with `session_id` `""` (unattributed egress) cannot be tied to a session and do nothing.
+
+An elevated session has its exec rules (`argument_injection_pattern`, `sandbox_escape_pattern`, `auto_approve_write_via_injection`) and egress rules (`webhook_destination_arg`, `api_base_url_redirect`) bumped one severity step, and one MEDIUM `posture_elevated` marker finding (source file and reason) is emitted once per session. Posture only raises; it never lowers or blocks by itself. The daemon and `finalize-session` enable it; the library default and `replay` leave it off so fixtures stay deterministic.
 
 ### Outputs from the agent monitor
 

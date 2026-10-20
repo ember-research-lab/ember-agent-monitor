@@ -34,6 +34,9 @@ pub struct DetectionConfig {
     pub spectral_cadence: usize,
     /// Anomaly score above which `spectral_anomaly` fires.
     pub spectral_threshold: f64,
+    /// Session posture from sibling-tool findings (#27, #31). `None` = off
+    /// (library default, fixtures); the daemon enables it.
+    pub posture: Option<std::sync::Arc<crate::posture::SessionPosture>>,
 }
 
 impl Default for DetectionConfig {
@@ -45,6 +48,7 @@ impl Default for DetectionConfig {
             spectral_baseline: Some(crate::spectral::Baseline::default_baseline()),
             spectral_cadence: 5,
             spectral_threshold: 0.5,
+            posture: None,
         }
     }
 }
@@ -74,6 +78,7 @@ pub fn run_spectral(graph: &SessionGraph, cfg: &DetectionConfig) -> Vec<Finding>
 /// running session graph.
 pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -> Vec<Finding> {
     let mut out = Vec::new();
+    let marker = cfg.posture.as_ref().and_then(|p| p.observe(event));
     rules::sensitive_zone_access(event, cfg, &mut out);
     rules::argument_injection_pattern(event, &mut out);
     rules::instruction_shape_in_tool_result(event, &mut out);
@@ -89,6 +94,10 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::api_base_url_redirect(event, &mut out);
     rules::sandbox_escape_pattern(event, &mut out);
     rules::auto_approve_write_via_injection(event, graph, &mut out);
+    if let Some(p) = &cfg.posture {
+        p.bump(&event.session_id, &mut out);
+    }
+    out.extend(marker);
     out.retain(|f| f.score >= cfg.min_score);
     out
 }
