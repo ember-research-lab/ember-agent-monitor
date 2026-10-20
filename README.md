@@ -104,7 +104,8 @@ journalctl --user -u ember-agent-monitor -n 20       # "watcher — events=… m
 
 Suite wiring: the daemon serves `~/.ember/agent-monitor/events.sock` (tool_calls → `ember-network monitor`, from both the proxy and the file-watcher, each line tagged `source`, one line per `tool_use_id`);
 `ember-agent finalize-idle` (run by ember-persistent's ingest timer, see that repo's `contrib/systemd/`)
-hands quiet sessions to ember-persistent.
+hands quiet sessions to ember-persistent. In the other direction the daemon reads `~/.ember/{vetpkg,persistent,network}/findings.jsonl`
+to raise a session's posture (exec and egress rules bump one severity step, one `posture_elevated` marker); see spec §6.
 
 Claude Code only goes through the proxy if `ANTHROPIC_BASE_URL=http://127.0.0.1:9452` is set in its
 environment; without it the watcher is the only view (no intervention, observe/warn findings only).
