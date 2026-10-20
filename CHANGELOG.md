@@ -12,7 +12,12 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 - **`instruction_directive_in_tool_result` (MEDIUM, #42).** Scores untrusted tool output for *directive shape* (request verb plus
   first-person or destination cues, override of earlier instructions, role claims, concealment, tool-invocation requests) instead of
   literal markers. Local file/shell/subagent tool output is discounted.
+- **Benchmark harness (#42).** Converters for InjecAgent, AgentDojo, BIPIA, Open-Prompt-Injection, ASB and LLMail-Inject, 3-case offline
+  fixtures, and an `#[ignore]` full-corpus run with a 70/30 split and a benign-transcript FP replay. See `tests/bench/README.md`.
 ### Fixed
+- **Detector no longer panics on real tool output (#47).** The clickfix `open-terminal-and-run` window sliced a byte range that could
+  end inside a multibyte character, and `find_command_chain` indexed one past the end on a trailing `|`. Both found by replaying
+  real transcripts; regression tests added.
 - **`argument_injection_pattern` no longer fires HIGH on benign shell commands (#26).** The rule is tool-class
   aware: shell tools (`Bash`, names containing `shell`/`exec`) get their own pattern list (pipe-to-shell,
   base64-decode-then-exec, eval of fetched content, Claude config paths, `rm -rf` on non-temp paths,
