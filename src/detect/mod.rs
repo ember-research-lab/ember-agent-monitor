@@ -9,6 +9,7 @@
 //! webpage content is high-signal. Trust-zone context is *required*, not
 //! optional.
 
+pub mod directive;
 pub mod finding;
 pub mod memory_paths;
 pub mod patterns;
@@ -84,6 +85,7 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::argument_injection_pattern(event, &mut out);
     rules::instruction_shape_in_tool_result(event, &mut out);
     rules::invisible_unicode_in_tool_result(event, &mut out);
+    rules::instruction_directive_in_tool_result(event, graph, &mut out);
     rules::agent_as_intermediary_clickfix(event, &mut out);
     rules::pretext_shift(event, &mut out);
     rules::instruction_shape_in_mcp_description(event, &mut out);

@@ -1076,6 +1076,68 @@ pub fn instruction_shape_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     }
 }
 
+/// instruction_directive_in_tool_result: untrusted tool output that is shaped like a
+/// request to the reader (see `directive`), not just one of the literal markers
+/// `instruction_shape_in_tool_result` knows. The producing tool is looked up by
+/// `tool_use_id` so output of local file/shell tools is weighted down; an
+/// unpaired result is treated as third-party data. MEDIUM: shape is a heuristic.
+pub fn instruction_directive_in_tool_result(
+    event: &Event,
+    graph: &SessionGraph,
+    out: &mut Vec<Finding>,
+) {
+    if event.kind != EventKind::ToolResult || event.trust_zone != TrustZone::UntrustedToolOutput {
+        return;
+    }
+    let content = string_from_body(event, "content")
+        .or_else(|| string_from_body(event, "content_preview"))
+        .unwrap_or_default();
+    if content.is_empty() {
+        return;
+    }
+    let tool = tool_name_for_result(event, graph);
+    let class = tool.as_deref().map_or(
+        super::directive::SourceClass::External,
+        super::directive::source_class,
+    );
+    let s = super::directive::score_text(&content, class);
+    if s.score < super::directive::THRESHOLD {
+        return;
+    }
+    out.push(Finding {
+        finding_type: "instruction_directive_in_tool_result".into(),
+        scope: FindingScope::Dynamic,
+        severity: Severity::Medium,
+        session_id: event.session_id.clone(),
+        event_id: Some(event.event_id.clone()),
+        tool,
+        argument: None,
+        matched_value: None,
+        pattern: Some(s.cues.join("+")),
+        trust_zone: Some(event.trust_zone),
+        rationale: format!(
+            "Untrusted tool output is shaped like a request to its reader (directive score {:.2})",
+            s.score
+        ),
+        score: PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * Severity::Medium.weight(),
+    });
+}
+
+/// Name of the tool_call that produced this tool_result (last 256 events).
+fn tool_name_for_result(event: &Event, graph: &SessionGraph) -> Option<String> {
+    let id = string_from_body(event, "tool_use_id")?;
+    graph
+        .dynamic_graph
+        .last_n(256)
+        .iter()
+        .rev()
+        .find(|e| {
+            e.kind == EventKind::ToolCall
+                && string_from_body(e, "tool_use_id").as_deref() == Some(id.as_str())
+        })
+        .and_then(|e| string_from_body(e, "tool_name").or_else(|| string_from_body(e, "name")))
+}
+
 /// invisible_unicode_in_tool_result: untrusted tool output carries codepoints that
 /// render as nothing and that some tokenizers strip (Unicode tag characters, private
 /// use ASCII-shift band, bidi overrides/isolates, zero-width; see
