@@ -12,6 +12,18 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 - CI: every job has `timeout-minutes` (whale-signal#258).
 
 ### Added
+- **OpenAI-compatible local-lane pass-through (`net::openai_pass`).** `POST /openai/v1/chat/completions`
+  is now relayed *streaming* (SSE included, chunk framing stripped, upstream status passed through, a
+  client hang-up kills the upstream curl so generation stops) instead of buffered. `GET /openai/health`
+  and `GET /openai/props` relay to the upstream's `/health` and `/props` (llama-server). Each exchange
+  is recorded in the session graph: request events as before, plus one `model_text` event with
+  `direction=response`, model, prompt/completion tokens, finish reason, latency, upstream status
+  (also recorded when the upstream is unreachable: 502). `GET /sessions/<id>` reports whether a session
+  exists (`{events, responses}` or 404 `no_session`); replies echo `X-Ember-Session`. Session id comes
+  from the existing `x-ember-session-id` header. Configure with `--upstream-openai http://127.0.0.1:11436`
+  and point the client at `http://127.0.0.1:9452/openai`. Response-side analysis is observe-only;
+  tool calls in replies are not interpreted. Bound to 127.0.0.1 as before. Tests: `tests/local_lane.rs`.
+  (ember-local#1)
 - **`invisible_unicode_in_tool_result` rule (MEDIUM).** Flags untrusted tool output carrying
   invisible/format codepoints: Unicode tag characters (outside the three RGI flag tag sequences;
   fake or unterminated flags count), the private-use ASCII-shift band plus supplementary
