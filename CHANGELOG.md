@@ -8,6 +8,11 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+- **Proxy 404'd Claude Code's `POST /v1/messages?beta=true` (#58).** Routes now match on the URI path only (`proto::path_only`); the
+  original query string is forwarded upstream unchanged (Anthropic `upstream_path` previously hard-coded `/v1/messages`). Same for
+  OpenAI routes and `/health`. Tests: proto unit tests and `tests/claude_code_request_shape.rs` (mock upstream, exact header shape).
+
 ### Added
 - **`instruction_directive_in_tool_result` (MEDIUM, #42).** Scores untrusted tool output for *directive shape* (request verb plus
   first-person or destination cues, override of earlier instructions, role claims, concealment, tool-invocation requests) instead of
