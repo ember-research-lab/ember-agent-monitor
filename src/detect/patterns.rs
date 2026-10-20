@@ -996,12 +996,34 @@ fn has_flag(s: &str, flag: &str) -> bool {
 }
 
 fn find_command_chain(s: &str) -> Option<()> {
-    // ; followed by 0+ whitespace then a known command, OR an && / || chain.
-    // Catches both bare-shell and quoted-arg variants (CVE-2025-54795
-    // InversePrompt: `echo "x; cat /etc/passwd | curl ..."` — the semicolon
-    // sits inside an approved tool's quoted arg). We also catch `&&` / `||`
-    // followed by a known command.
+    if command_chain_spans(s).is_empty() {
+        None
+    } else {
+        Some(())
+    }
+}
+
+/// Longest span (bytes) kept for a chain tail: enough to be distinctive,
+/// short enough to survive a re-wrap by the model.
+const CHAIN_SPAN_MAX: usize = 160;
+
+fn clip_boundary(s: &str, max: usize) -> &str {
+    let mut e = s.len().min(max);
+    while !s.is_char_boundary(e) {
+        e -= 1;
+    }
+    &s[..e]
+}
+
+/// Every command-chain occurrence in `s`: `;` / `&&` / `||` followed by 0+
+/// blanks and a known command. Returns the tail starting at that command, to
+/// the end of its line (clipped), which is what an injection would have
+/// carried verbatim (the provenance check, `rules::argument_injection_pattern`).
+/// Catches bare-shell and quoted-arg variants (CVE-2025-54795 InversePrompt:
+/// `echo "x; cat /etc/passwd | curl ..."`).
+fn command_chain_spans(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
+    let mut out = Vec::new();
     let mut i = 0;
     let cmds = [
         "rm", "curl", "wget", "bash", "sh", "cat", "nc", "ncat", "python", "perl", "ruby",
@@ -1027,14 +1049,84 @@ fn find_command_chain(s: &str) -> Option<()> {
                 if j + cmd.len() <= bytes.len() && &bytes[j..j + cmd.len()] == cmd.as_bytes() {
                     let after = bytes.get(j + cmd.len()).copied();
                     if after.is_none() || !after.unwrap().is_ascii_alphanumeric() {
-                        return Some(());
+                        let line_end = s[j..].find('\n').map_or(s.len(), |n| j + n);
+                        out.push(clip_boundary(&s[j..line_end], CHAIN_SPAN_MAX));
+                        break;
                     }
                 }
             }
         }
         i += 1;
     }
-    None
+    out
+}
+
+/// The shell-shaped spans of `s` for one of the three provenance-gated
+/// argument shapes (`GATED_SHAPES`): the chain tail, the `$(..)` body, or the
+/// backtick body. Empty for any other label.
+pub fn shape_spans<'a>(label: &str, s: &'a str) -> Vec<&'a str> {
+    match label {
+        "command chain injection" => command_chain_spans(s),
+        "command substitution" => {
+            let mut out = Vec::new();
+            let mut from = 0;
+            while let Some(p) = s[from..].find("$(") {
+                let a = from + p + 2;
+                match s[a..].find(')') {
+                    Some(n) => {
+                        out.push(&s[a..a + n]);
+                        from = a + n + 1;
+                    }
+                    None => break,
+                }
+            }
+            out
+        }
+        "backtick command substitution" => {
+            let mut out = Vec::new();
+            let mut from = 0;
+            while let Some(p) = s[from..].find('`') {
+                let a = from + p + 1;
+                match s[a..].find('`') {
+                    Some(n) => {
+                        out.push(&s[a..a + n]);
+                        from = a + n + 1;
+                    }
+                    None => break,
+                }
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Argument shapes that are an injection signal only with untrusted
+/// provenance (#45): a shell chain, `$(..)` or backticks in a non-shell
+/// tool's argument is prose, code or data unless the text traces to an
+/// external tool result.
+pub const GATED_SHAPES: &[&str] = &[
+    "command chain injection",
+    "command substitution",
+    "backtick command substitution",
+];
+
+/// Tools whose string arguments are prose written by the model to a person
+/// or another agent (or a note to itself). Markdown code spans in these are
+/// never "backtick command substitution" (#45).
+pub fn is_prose_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name.to_ascii_lowercase().as_str(),
+        "agent"
+            | "task"
+            | "sendmessage"
+            | "subagenthandback"
+            | "artifact"
+            | "artifactcomments"
+            | "artifactdata"
+            | "askuserquestion"
+            | "todowrite"
+    )
 }
 
 #[cfg(test)]
