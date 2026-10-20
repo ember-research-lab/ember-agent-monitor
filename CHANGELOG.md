@@ -8,6 +8,10 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+- docs: README "Run as a user service" — systemd user unit running `daemon --mode warn` with the
+  `/openai` upstream pointed at the local llama-server.
+
 ### Changed
 - CI: every job has `timeout-minutes` (whale-signal#258).
 
