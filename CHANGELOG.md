@@ -30,6 +30,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   lines and a 5-minute event/ignored/malformed tally.
 
 ### Added
+- **`memory_write_by_subagent` rule (#32).** HIGH when a write/edit tool_call on a memory-class path comes from
+  an event with non-empty `agent_id` (needs #30). Path list pinned in `detect::memory_paths`, a lock-step copy
+  of ember-persistent's `MEMORY_CLASS_PATHS`.
 - **Transcript events carry `agent_id`, `is_sidechain`, `uuid` (#30).** Additive body fields from the
   transcript's `agentId` / `isSidechain` / `uuid`, so persistent and the per-session rules can attribute events
   to a subagent. `watcher::TRANSCRIPT_FIELDS` records every transcript field as carried, consumed or dropped;
