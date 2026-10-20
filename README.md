@@ -49,6 +49,15 @@ claude   # or your agent of choice
 ./target/release/ember-agent findings
 ```
 
+### Local llama-server lane (OpenAI-compatible, streaming)
+
+```bash
+./target/release/ember-agent daemon --mode observe --upstream-openai http://127.0.0.1:11436
+# client base URL: http://127.0.0.1:9452/openai   (adds /v1/chat/completions, /health, /props)
+# send  X-Ember-Session-Id: <id>  on requests; then  GET /sessions/<id>  says whether a
+# session graph was recorded (200 {events, responses} / 404 no_session).
+```
+
 ## Detection layers
 
 - **v0 substrate** — HTTP proxy, file-watcher, append-only event log,

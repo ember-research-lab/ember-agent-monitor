@@ -6,5 +6,6 @@
 //! exhaustion.
 
 pub mod http;
+pub mod openai_pass;
 pub mod proxy;
 pub mod socket;
