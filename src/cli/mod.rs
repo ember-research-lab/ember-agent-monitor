@@ -5,7 +5,7 @@
 //!   ember-agent daemon   — run the proxy + file-watcher
 //!   ember-agent status   — show daemon health, fidelity status
 //!   ember-agent findings — query the findings log
-//!   ember-agent replay   — re-run detection on an existing event log
+//!   ember-agent replay   — re-run detection on an event log or a raw transcript (--transcript)
 //!
 //! No clap dep; vetpkg-style hand-rolled arg parser.
 
@@ -55,7 +55,7 @@ fn print_help() {
     eprintln!("  status               Show daemon health and fidelity status");
     eprintln!("  findings [--session S]");
     eprintln!("                       List findings (optionally for one session)");
-    eprintln!("  replay <events.jsonl>");
+    eprintln!("  replay <events.jsonl> | --transcript <transcript.jsonl>");
     eprintln!("                       Re-run detection over a recorded event log");
     eprintln!("  calibrate <events.jsonl> [...]");
     eprintln!("                       Compute a spectral baseline envelope from clean sessions");
@@ -603,12 +603,45 @@ fn normalized_heat_envelope(
     }
 }
 
+/// Load the events to replay: a monitor event log, or (`--transcript`) a raw
+/// Claude Code transcript converted line by line by the same adapter the
+/// file-watcher uses (`watcher::interpret_line`). Malformed lines are counted
+/// and reported, never silently dropped; a transcript that yields no events
+/// is an error.
+fn load_replay_events(args: &[String]) -> Result<Vec<crate::event::Event>, String> {
+    match args {
+        [flag, path] if flag == "--transcript" => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
+            let mut seen = std::collections::HashSet::new();
+            let (mut events, mut malformed, mut skipped) = (Vec::new(), 0usize, 0usize);
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                match crate::watcher::interpret_line(line, &mut seen) {
+                    crate::watcher::LineOutcome::Events(e) => events.extend(e),
+                    crate::watcher::LineOutcome::NotConversation => skipped += 1,
+                    crate::watcher::LineOutcome::Malformed(_) => malformed += 1,
+                }
+            }
+            eprintln!(
+                "transcript: {} event(s), {skipped} non-conversation record(s), {malformed} malformed line(s)",
+                events.len()
+            );
+            if events.is_empty() {
+                return Err(format!("{path}: no conversation events found"));
+            }
+            Ok(events)
+        }
+        [path] if !path.starts_with("--") => {
+            crate::store::log::read_all(std::path::Path::new(path))
+        }
+        _ => Err("usage: replay <events.jsonl> | replay --transcript <transcript.jsonl>".into()),
+    }
+}
+
 fn cmd_replay(args: Vec<String>) -> Result<u8, String> {
-    let path = args.first().ok_or("replay requires an events.jsonl path")?;
-    let events = crate::store::log::read_all(std::path::Path::new(path))?;
+    let events = load_replay_events(&args)?;
     let mut graph = crate::graph::SessionGraph::default();
     let mut session_id = String::new();
-    for ev in events.into_iter() {
+    for ev in events.iter().cloned() {
         if session_id.is_empty() {
             session_id = ev.session_id.clone();
         }
@@ -642,8 +675,14 @@ fn cmd_replay(args: Vec<String>) -> Result<u8, String> {
     }
 
     // Run detection over the replayed events.
-    let cfg = crate::detect::DetectionConfig::default();
-    let events = crate::store::log::read_all(std::path::Path::new(path))?;
+    let mut cfg = crate::detect::DetectionConfig::default();
+    if args.first().map(String::as_str) == Some("--transcript") {
+        // The spectral layer builds a dense session-graph spectrum: cubic in
+        // events, minutes on a real multi-thousand-event transcript. Pattern
+        // rules (static + dynamic) are what the benign-FP harness measures.
+        eprintln!("spectral layer skipped for --transcript (cubic in session events)");
+        cfg.spectral_baseline = None;
+    }
     let findings = crate::detect::run_all(&events, &cfg);
     eprintln!("\n{} finding(s):", findings.len());
     let mut by_severity: std::collections::BTreeMap<&str, Vec<&crate::detect::Finding>> =

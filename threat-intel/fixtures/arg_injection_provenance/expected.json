@@ -1,0 +1,8 @@
+{
+  "fixture": "arg_injection_provenance",
+  "_note": "#45: a $(..) in a Write argument fires HIGH only because the same text sits in an earlier WebFetch result (external source). spectral_motif_match is the short-session star motif every minimal fixture here carries (see spectral_clean_pipeline).",
+  "expected_findings": [
+    {"type": "argument_injection_pattern", "scope": "dynamic", "severity": "high"},
+    {"type": "spectral_motif_match", "scope": "static", "severity": "medium"}
+  ]
+}
