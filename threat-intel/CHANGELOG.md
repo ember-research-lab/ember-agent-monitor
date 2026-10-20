@@ -6,6 +6,9 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Added — `memory_write_by_subagent` (#32)
+- HIGH per-session rule; fixtures `subagent_memory_write` (2 HIGH of 3 writes) and `main_agent_memory_write` (none).
+
 ### Added — `invisible_unicode_in_tool_result` + tag-decoded rescan (closes the tag-char fixture)
 - New rule `invisible_unicode_in_tool_result` (MEDIUM, `untrusted_tool_output`). Classes: unicode-tag,
   private-use (ASCII-shift band + supplementary planes), bidi-control (overrides/isolates),

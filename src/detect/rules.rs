@@ -1335,6 +1335,50 @@ pub fn spectral_motif_match(
     }
 }
 
+/// Per-session rule `memory_write_by_subagent` (#32), HIGH. A write/edit
+/// tool_call on a memory-class path (CLAUDE.md, memory/, charters/,
+/// .claude/{rules,hooks,settings*}) from an event whose `agent_id` is
+/// non-empty: a subagent persisting content into the files that steer future
+/// sessions. Main-agent writes (no `agent_id`) do not fire. Needs the
+/// transcript attribution fields carried by #30.
+pub fn memory_write_by_subagent(event: &Event, out: &mut Vec<Finding>) {
+    use super::memory_paths::{is_memory_class_path, is_write_tool, PATH_KEYS};
+    if event.kind != EventKind::ToolCall {
+        return;
+    }
+    let agent_id = string_from_body(event, "agent_id").unwrap_or_default();
+    if agent_id.is_empty() {
+        return;
+    }
+    let tool = string_from_body(event, "tool_name").unwrap_or_default();
+    if !is_write_tool(&tool) {
+        return;
+    }
+    let Some(JsonValue::Object(input)) = event.body.get("input") else {
+        return;
+    };
+    for (k, v) in input {
+        let JsonValue::Str(path) = v else { continue };
+        if !PATH_KEYS.contains(&k.as_str()) || !is_memory_class_path(path) {
+            continue;
+        }
+        out.push(Finding {
+            finding_type: "memory_write_by_subagent".into(),
+            scope: FindingScope::Dynamic,
+            severity: Severity::High,
+            session_id: event.session_id.clone(),
+            event_id: Some(event.event_id.clone()),
+            tool: Some(tool.clone()),
+            argument: Some(k.clone()),
+            matched_value: Some(path.clone()),
+            pattern: Some(agent_id.clone()),
+            trust_zone: None,
+            rationale: format!("subagent {agent_id} wrote a memory-class path via {tool}"),
+            score: PATTERN_HIT_WEIGHT * Severity::High.weight(),
+        });
+    }
+}
+
 fn string_from_body(event: &Event, key: &str) -> Option<String> {
     event.body.get(key).and_then(|v| match v {
         JsonValue::Str(s) => Some(s.clone()),

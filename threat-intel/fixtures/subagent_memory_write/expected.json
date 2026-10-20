@@ -1,0 +1,16 @@
+{
+  "fixture": "subagent_memory_write",
+  "_note": "#32: subagent Write/Edit on memory-class paths = HIGH each; a subagent write to an ordinary path = none.",
+  "expected_findings": [
+    {
+      "type": "memory_write_by_subagent",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "memory_write_by_subagent",
+      "scope": "dynamic",
+      "severity": "high"
+    }
+  ]
+}
