@@ -137,6 +137,28 @@ cannot inspect or strip bytes they cannot read).
 Warn/block need a stream-aware strip (buffering would defeat streaming and a silent pass-through would defeat the mode); until that
 lands run `--mode observe`. Tests: `tests/anthropic_forwarding.rs`.
 
+## Cost accounting
+
+`ember-agent cost [--since YYYY-MM-DD] [--session ID] [--by model|actor|project|session|day|week] [--json] [--strict]` totals tokens
+and **list-price** cost from the `usage` block of every assistant message in `~/.claude/projects/**` (top-level sessions and
+`subagents/*.jsonl`; actor = `subagent` for those files or `isSidechain`, else `driver`). Local file reads only.
+
+- **Prices** are pinned in [`prices.toml`](prices.toml) (compiled in; `--prices FILE` overrides) with `valid_from`, `reviewed_until`
+  and the source path. Every table prints the dates. A message dated after `reviewed_until` prints a `STALE PRICES` warning.
+- **Unknown model = `UNPRICED`**, excluded from the dollar total and called out on stderr; `--strict` exits 3. Aliases (`opus`) are not guessed;
+  a dated id (`-20251001`) and `[1m]` are normalised to the base id.
+- **One message, counted once.** Claude Code writes one transcript line per content block, each repeating `usage`. Lines are keyed on
+  `message.id` and the largest value of each field is kept (only `output_tokens` grows). Counting lines instead overstates the total 2.4x since 2026-10-20 (up to 7x on one session).
+- A `cache_creation` object splits 5-minute and 1-hour writes; an unsplit total is priced as 5-minute. `<synthetic>` all-zero messages are skipped.
+- Known understatement: `claude-haiku-5-5` is dearer above 100K prompt tokens; the table applies the lower rate throughout.
+- The daemon's watcher rewrites `<data-dir>/cost-rollup.json` (last 8 days, by day and by model) every 5 minutes.
+
+**This is not a bill.** A subscription (Claude Code Pro/Max) is metered against a rolling usage limit, not per token, so list-price
+dollars say what the same tokens would cost on the API, nothing about what you pay. The `[pace] weekly N% used` hook reads
+`~/.claude/usage-log.jsonl` (percent of the subscription limit, reported by Claude Code) and parses no tokens, so the two cannot be
+converted into one another; it is the limit signal, this command is the volume and mix signal. Reconciliation on 2026-10-20 is in the
+PR for #63.
+
 ## Detection layers
 
 - **v0 substrate** — HTTP proxy, file-watcher, append-only event log,

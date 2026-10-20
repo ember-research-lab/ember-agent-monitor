@@ -20,6 +20,13 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   OpenAI routes and `/health`. Tests: proto unit tests and `tests/claude_code_request_shape.rs` (mock upstream, exact header shape).
 
 ### Added
+- **`ember-agent cost` — token and list-price accounting from transcript `usage` (#63).** Watcher-side, no network. Reads
+  `~/.claude/projects/**` (sessions and `subagents/*.jsonl`), counts each API message once (transcripts repeat a message per content
+  block and only `output_tokens` grows across the repeats, so the largest value per `message.id` wins), prices it from the pinned
+  `prices.toml` (`valid_from`/`reviewed_until`, source path; printed in every table), and rolls up `--by model|actor|project|session|day|week`,
+  `--since`, `--session`, `--json`. A model id not in the table is an `UNPRICED` row, never zero; `--strict` exits 3 on any; a message dated
+  after `reviewed_until` prints a staleness warning. The daemon's watcher rewrites `<data-dir>/cost-rollup.json` (last 8 days, by day and
+  by model) on its existing 5-minute cadence. List price only, not a subscription bill. Tests: `tests/cost_accounting.rs`.
 - **`instruction_directive_in_tool_result` (MEDIUM, #42).** Scores untrusted tool output for *directive shape* (request verb plus
   first-person or destination cues, override of earlier instructions, role claims, concealment, tool-invocation requests) instead of
   literal markers. Local file/shell/subagent tool output is discounted.
