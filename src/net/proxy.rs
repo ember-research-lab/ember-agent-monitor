@@ -227,6 +227,12 @@ fn handle_connection(mut stream: TcpStream, ctx: Arc<ProxyContext>) {
         Err(_) => return,
     };
 
+    // OpenAI-compatible pass-through (local llama-server lane): streams, so it
+    // writes to the socket itself instead of returning a buffered response.
+    if crate::net::openai_pass::route(&req, &ctx, &mut stream) {
+        return;
+    }
+
     let resp = if req.method == "GET" && Protocol::is_health_path(&req.path) {
         HttpResponse::ok_json(br#"{"status":"ok","tool":"ember-agent-monitor"}"#.to_vec())
     } else if req.method == "POST" {
@@ -253,7 +259,14 @@ fn handle_connection(mut stream: TcpStream, ctx: Arc<ProxyContext>) {
     let _ = resp.write_to(&mut stream);
 }
 
-fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) -> HttpResponse {
+/// Record + analyze every event of an inbound request (and the
+/// `protocol_mismatch_attempt` signal). Returns the session id and the
+/// high/critical findings that drive forward intervention.
+pub(crate) fn ingest_request(
+    req: &HttpRequest,
+    ctx: &ProxyContext,
+    protocol: Protocol,
+) -> (String, Vec<Finding>) {
     // Detect protocol/body mismatch as a finding before parsing — even if
     // the body parses cleanly, a mismatch is signal worth recording.
     let mismatch_reason = protocol.body_disagrees(&req.body);
@@ -294,6 +307,12 @@ fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) ->
             }
         }
     }
+
+    (session_id, high_findings)
+}
+
+fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) -> HttpResponse {
+    let (session_id, high_findings) = ingest_request(req, ctx, protocol);
 
     // Forward-direction intervention.
     match ctx.config.mode {
@@ -729,7 +748,7 @@ fn forward_via_curl(
     Ok(out.stdout)
 }
 
-fn which_curl() -> Result<String, String> {
+pub(crate) fn which_curl() -> Result<String, String> {
     for candidate in [
         "/usr/bin/curl",
         "/opt/homebrew/bin/curl",
@@ -742,7 +761,7 @@ fn which_curl() -> Result<String, String> {
     Err("curl not found in standard paths".into())
 }
 
-fn header_passthrough_blocked(name: &str) -> bool {
+pub(crate) fn header_passthrough_blocked(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     matches!(
         n.as_str(),
