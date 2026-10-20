@@ -49,6 +49,13 @@ impl Event {
         }
     }
 
+    /// Add or replace one body field and re-derive `content_hash`
+    /// (`event_id` is left as minted).
+    pub fn set_body_field(&mut self, key: &str, value: JsonValue) {
+        self.body.insert(key.to_string(), value);
+        self.content_hash = hash_body(&self.body);
+    }
+
     pub fn with_parent(mut self, parent: impl Into<String>) -> Self {
         self.parent_event_id = Some(parent.into());
         self

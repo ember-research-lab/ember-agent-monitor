@@ -25,6 +25,10 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   lines and a 5-minute event/ignored/malformed tally.
 
 ### Added
+- **Transcript events carry `agent_id`, `is_sidechain`, `uuid` (#30).** Additive body fields from the
+  transcript's `agentId` / `isSidechain` / `uuid`, so persistent and the per-session rules can attribute events
+  to a subagent. `watcher::TRANSCRIPT_FIELDS` records every transcript field as carried, consumed or dropped;
+  a test fails on an unlisted field.
 - **`events.sock` is now actually served** (`ProxyContext` binds `<data_dir>/events.sock` and broadcasts every
   recorded `tool_call`; it was specified in §6 and implemented in `net::socket` but never instantiated, so
   `ember-network subscribe/monitor` could not connect). A bind failure is reported on stderr at startup.

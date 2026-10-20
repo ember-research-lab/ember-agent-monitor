@@ -131,3 +131,71 @@ fn first_record_of_a_session_yields_session_start_with_cwd() {
     };
     assert_eq!(again.len(), 1, "session_start only once per session");
 }
+
+#[test]
+fn agent_attribution_fields_are_carried_into_every_event_body() {
+    use ember_agent_monitor::json::JsonValue;
+    let mut seen = std::collections::HashSet::new();
+    let line = r#"{"type":"assistant","sessionId":"s7","agentId":"a1b2","isSidechain":true,"uuid":"u-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"t9","name":"Write","input":{"file_path":"/x"}}]}}"#;
+    let evs = match interpret_line(line, &mut seen) {
+        LineOutcome::Events(e) => e,
+        _ => panic!("events"),
+    };
+    assert_eq!(evs.len(), 2); // session_start + tool_call
+    for ev in &evs {
+        assert_eq!(
+            ev.body.get("agent_id"),
+            Some(&JsonValue::Str("a1b2".into()))
+        );
+        assert_eq!(ev.body.get("is_sidechain"), Some(&JsonValue::Bool(true)));
+        assert_eq!(ev.body.get("uuid"), Some(&JsonValue::Str("u-1".into())));
+    }
+    // A main-agent record carries no agent_id.
+    let main = r#"{"type":"user","sessionId":"s7","isSidechain":false,"uuid":"u-2","message":{"role":"user","content":"hi"}}"#;
+    let evs = match interpret_line(main, &mut seen) {
+        LineOutcome::Events(e) => e,
+        _ => panic!("events"),
+    };
+    assert!(!evs[0].body.contains_key("agent_id"));
+    assert_eq!(
+        evs[0].body.get("is_sidechain"),
+        Some(&JsonValue::Bool(false))
+    );
+}
+
+#[test]
+fn every_transcript_field_is_carried_or_explicitly_dropped() {
+    use ember_agent_monitor::json::{parse, JsonValue};
+    use ember_agent_monitor::watcher::{FieldDisposition, TRANSCRIPT_FIELDS};
+    // A full real-shape Claude Code record. A new upstream field must be
+    // added here AND to TRANSCRIPT_FIELDS (carried or dropped on purpose).
+    let rec = r#"{"parentUuid":"p","isSidechain":true,"userType":"external","cwd":"/w","sessionId":"s8","version":"2.1","gitBranch":"main","agentId":"ag","type":"user","message":{"role":"user","content":"x"},"uuid":"u","timestamp":"2026-10-20T00:00:00Z","requestId":"r","toolUseResult":{},"isMeta":false,"slug":"s","permissionMode":"default","promptId":"pid","entrypoint":"cli","sourceToolAssistantUUID":"z"}"#;
+    let JsonValue::Object(o) = parse(rec).unwrap() else {
+        panic!("object")
+    };
+    for (k, _) in &o {
+        assert!(
+            TRANSCRIPT_FIELDS.iter().any(|(n, _)| n == k),
+            "transcript field {k} has no disposition"
+        );
+    }
+    let mut seen = std::collections::HashSet::new();
+    let evs = match interpret_line(rec, &mut seen) {
+        LineOutcome::Events(e) => e,
+        _ => panic!("events"),
+    };
+    for (name, disp) in TRANSCRIPT_FIELDS {
+        match disp {
+            FieldDisposition::Carried(dst) => {
+                assert!(
+                    evs[0].body.contains_key(*dst),
+                    "{name} not carried as {dst}"
+                )
+            }
+            FieldDisposition::Dropped => {
+                assert!(!evs[0].body.contains_key(*name), "{name} leaked unrenamed")
+            }
+            FieldDisposition::Consumed => {}
+        }
+    }
+}
