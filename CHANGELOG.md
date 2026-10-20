@@ -8,6 +8,14 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added (class guard, #64)
+- **Real-client compatibility gate.** `tests/claude_code_e2e.rs` runs the installed `claude -p` through the proxy against a mock
+  upstream (API key and bearer auth, `fable`/`opus`, `stream-json`, upstream 400); CI installs a pinned Claude Code and fails if it is
+  missing. Reintroducing the #58 route bug or the #60 wrapper makes it fail (`API Error: JSON Parse error`, "issue with the selected model").
+- **Wire-capture fixture** `tests/fixtures/claude-code/2.1.305/` replayed by the request-shape and forwarding tests instead of a
+  hand-written shape; `just capture-claude-code` refreshes it, a newer installed client warns.
+- **`just install` / `scripts/install.sh`**: build, restart, real-client acceptance for `fable` and `opus`, rollback to `<bin>.prev` on failure.
+
 ### Fixed
 - **Anthropic forwarder flattened every reply (#60).** It returned curl's stdout wrapped in a synthetic `200 application/json`, so a 401 became
   200, gzip bytes (from the forwarded `accept-encoding`) were labelled JSON (`API Error: JSON Parse error`), and `stream: true` SSE was
