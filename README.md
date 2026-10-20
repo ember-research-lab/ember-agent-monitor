@@ -120,6 +120,12 @@ environment; without it the watcher is the only view (no intervention, observe/w
   trigger_cause_violation, classifier_disagreement,
   toxic_capability_composition, lethal_trifecta_reachability,
   high_risk_plugin_composition.
+  `argument_injection_pattern` is tool-class aware and provenance-gated (#45):
+  shell chains, `$(..)` and backticks in non-shell tools fire only when the text
+  traces to an earlier external tool result. `ember-agent replay --transcript <file>`
+  replays a raw Claude Code transcript; `cargo test --release --test benign_budget
+  -- --ignored --nocapture` prints each rule's benign FP per 1000 events and fails
+  over the pinned budgets.
 - **v2 spectral** — in-house Jacobi eigendecomposition, Laplacian
   builder, heat-kernel fingerprint, motif catalog (8 attack-shape
   graphs), spectral_anomaly + spectral_motif_match. Calibrated against
