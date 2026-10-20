@@ -9,6 +9,11 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Fixed
+- **`argument_injection_pattern` no longer fires HIGH on benign shell commands (#26).** The rule is tool-class
+  aware: shell tools (`Bash`, names containing `shell`/`exec`) get their own pattern list (pipe-to-shell,
+  base64-decode-then-exec, eval of fetched content, Claude config paths, `rm -rf` on non-temp paths,
+  credential-file upload, reverse shells); `&&`, `;`, `|`, backticks, `$(..)` and heredocs are no longer signals
+  for them. Other tools keep the old list. In `warn` mode the proxy would have stripped most `Bash` calls.
 - **`events.sock` tool_calls are tagged and de-duplicated (#35).** Watcher-derived tool_calls (transcripts
   read with Claude Code not routed through the proxy) are broadcast on `events.sock` in the same line shape as
   proxy-derived ones, now with an additive top-level `source: "watcher" | "proxy"`. A `tool_use_id` is

@@ -376,6 +376,9 @@ fn webhook_blocklist_match(host: &str) -> Option<&'static str> {
 
 /// Spec §4: argument_injection_pattern. Scans every string-typed value in
 /// the tool_call input map against the argument-injection pattern list.
+/// Tool-class aware (#26): shell tools (`Bash`, names containing `shell` or
+/// `exec`) use the shell list, where plain operators are not signals;
+/// every other tool keeps the flag/chain/substitution list.
 pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolCall {
         return;
@@ -385,12 +388,17 @@ pub fn argument_injection_pattern(event: &Event, out: &mut Vec<Finding>) {
         Some(JsonValue::Object(o)) => o.clone(),
         _ => return,
     };
+    let pattern_list = if patterns::is_shell_tool(&tool) {
+        patterns::shell_injection_patterns()
+    } else {
+        patterns::arg_injection_patterns()
+    };
     for (k, v) in &input {
         let s = match v {
             JsonValue::Str(s) => s.clone(),
             _ => continue,
         };
-        for (_label, matcher) in patterns::arg_injection_patterns() {
+        for (_label, matcher) in pattern_list {
             if let Some(label) = matcher(&s) {
                 // No trust-zone factor: the model's argument may itself be
                 // the product of an upstream prompt injection, so we treat

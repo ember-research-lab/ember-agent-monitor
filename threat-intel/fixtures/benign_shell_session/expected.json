@@ -1,0 +1,5 @@
+{
+  "fixture": "benign_shell_session",
+  "_note": "Calibration (#26): ordinary Claude Code Bash work with &&, ;, |, backticks, $(..) and heredocs yields zero HIGH argument_injection_pattern.",
+  "expected_findings": []
+}
