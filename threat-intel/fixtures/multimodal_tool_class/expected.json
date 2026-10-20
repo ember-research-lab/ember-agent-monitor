@@ -1,0 +1,16 @@
+{
+  "fixture": "multimodal_tool_class",
+  "_note": "#54: an image block in a Read (local tool) result is silent; one in an MCP screenshot result (external class) fires MEDIUM. spectral_motif_match is the short-session star motif every minimal fixture carries (#38).",
+  "expected_findings": [
+    {
+      "type": "multimodal_in_tool_result",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "spectral_motif_match",
+      "scope": "static",
+      "severity": "medium"
+    }
+  ]
+}

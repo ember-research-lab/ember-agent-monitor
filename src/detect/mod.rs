@@ -92,7 +92,7 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     rules::trigger_cause_violation(event, graph, &mut out);
     rules::classifier_disagreement(event, graph, &mut out);
     rules::webhook_destination_arg(event, &mut out);
-    rules::multimodal_in_tool_result(event, &mut out);
+    rules::multimodal_in_tool_result(event, graph, &mut out);
     rules::subagent_via_injection(event, graph, &mut out);
     rules::api_base_url_redirect(event, &mut out);
     rules::sandbox_escape_pattern(event, &mut out);

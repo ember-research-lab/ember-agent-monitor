@@ -138,6 +138,26 @@ impl SensitiveSet {
         false
     }
 
+    /// True when `path` is sensitive ONLY because it contains a `.claude`
+    /// component and every `.claude/<sub>` in it is a data directory
+    /// (`charters`, `memory`, `projects`, `worktrees`): the driver's own
+    /// state, not config or anything executable or permission-bearing (#53).
+    /// `settings*.json`, `hooks/`, `plugins/`, `skills/`, `rules/`,
+    /// `agents/`, credentials and every unlisted subdirectory stay HIGH
+    /// (fail closed); so does any other sensitive reason in the same string.
+    pub fn is_claude_data_only(&self, path: &Path) -> bool {
+        let Some(p) = path.to_str() else {
+            return false;
+        };
+        if !claude_subdirs_all_data(&p.to_ascii_lowercase()) {
+            return false;
+        }
+        let mut rest = self.clone();
+        rest.component_names
+            .retain(|c| !c.eq_ignore_ascii_case(".claude"));
+        !rest.matches(path)
+    }
+
     /// Load user additions from a config file. Each non-empty, non-comment
     /// line is interpreted as: an absolute path → `roots`; a leading `.`
     /// followed by chars → component name; anything containing only
@@ -168,4 +188,38 @@ impl SensitiveSet {
         }
         Ok(())
     }
+}
+
+/// Subdirectories of `.claude` that hold the driver's data, not config.
+const CLAUDE_DATA_DIRS: &[&str] = &["charters", "memory", "projects", "worktrees"];
+
+/// True when the (lowercased, normalized) string has at least one
+/// `.claude/<sub>` and every `<sub>` is a [`CLAUDE_DATA_DIRS`] entry that ends
+/// at a name boundary (`projects-x` and `projects.json` are not data dirs).
+fn claude_subdirs_all_data(p: &str) -> bool {
+    let mut from = 0;
+    let mut seen = false;
+    while let Some(i) = p[from..].find(".claude") {
+        let after = from + i + ".claude".len();
+        from = after;
+        let tail = &p[after..];
+        let Some(sub) = tail.strip_prefix('/') else {
+            // `.claude` is a path component only if followed by `/` or the
+            // end; `.claude.json`, `.claudex` are other names.
+            if tail.is_empty() {
+                return false;
+            }
+            continue;
+        };
+        let ok = CLAUDE_DATA_DIRS.iter().any(|d| {
+            sub.strip_prefix(d).is_some_and(|r| {
+                !r.starts_with(|c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            })
+        });
+        if !ok {
+            return false;
+        }
+        seen = true;
+    }
+    seen
 }

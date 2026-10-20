@@ -221,7 +221,8 @@ pub fn lethal_trifecta_reachability(graph: &SessionGraph, out: &mut Vec<Finding>
 }
 
 /// Spec §4: sensitive_zone_access. Walks tool_call input args, classifies
-/// any path-shaped value, fires HIGH if it lands in `sensitive_local`.
+/// any path-shaped value, fires if it lands in `sensitive_local`: HIGH, or
+/// MEDIUM for the driver's own `.claude` data directories (#53).
 pub fn sensitive_zone_access(event: &Event, cfg: &super::DetectionConfig, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolCall {
         return;
@@ -242,11 +243,19 @@ pub fn sensitive_zone_access(event: &Event, cfg: &super::DetectionConfig, out: &
         let normalized = normalize_path(&s);
         let zone = classify_path(&normalized, cfg.workspace_root.as_deref(), &cfg.sensitive);
         if zone == TrustZone::SensitiveLocal {
-            let score = PATTERN_HIT_WEIGHT * zone.inverse_trust() * Severity::High.weight();
+            // #53: the driver's own data under ~/.claude (charters, memory,
+            // transcripts, worktrees) is MEDIUM; config and anything
+            // executable or permission-bearing stays HIGH.
+            let severity = if cfg.sensitive.is_claude_data_only(&normalized) {
+                Severity::Medium
+            } else {
+                Severity::High
+            };
+            let score = PATTERN_HIT_WEIGHT * zone.inverse_trust() * severity.weight();
             out.push(Finding {
                 finding_type: "sensitive_zone_access".into(),
                 scope: FindingScope::Dynamic,
-                severity: Severity::High,
+                severity,
                 session_id: event.session_id.clone(),
                 event_id: Some(event.event_id.clone()),
                 tool: Some(tool.clone()),
@@ -421,6 +430,12 @@ fn span_traces_to_external_result(span: &str, graph: &SessionGraph) -> bool {
         })
 }
 
+/// True when the event was emitted by a subagent (`is_sidechain` carried by
+/// the transcript adapter). Absent means the driver.
+fn is_sidechain(event: &Event) -> bool {
+    matches!(event.body.get("is_sidechain"), Some(JsonValue::Bool(true)))
+}
+
 /// Spec §4: argument_injection_pattern. Scans every string-typed value in
 /// the tool_call input map against the argument-injection pattern list.
 /// Tool-class aware (#26): shell tools (`Bash`, names containing `shell` or
@@ -434,6 +449,9 @@ fn span_traces_to_external_result(span: &str, graph: &SessionGraph) -> bool {
 /// (`patterns::is_prose_tool`) never count. Flag injection, and everything in
 /// the shell-tool list (the genuinely dangerous shapes), keep their
 /// unconditional HIGH.
+/// The one exception (#52) is the shell label `claude-config-path`: MEDIUM unless
+/// the actor is a subagent (`is_sidechain`) or a path token traces to an
+/// external result.
 pub fn argument_injection_pattern(event: &Event, graph: &SessionGraph, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolCall {
         return;
@@ -454,6 +472,7 @@ pub fn argument_injection_pattern(event: &Event, graph: &SessionGraph, out: &mut
             JsonValue::Str(s) => s.clone(),
             _ => continue,
         };
+        let (mut emitted, mut demoted) = (false, None);
         for (_label, matcher) in pattern_list {
             if let Some(label) = matcher(&s) {
                 if !shell && patterns::GATED_SHAPES.contains(&label) {
@@ -467,27 +486,70 @@ pub fn argument_injection_pattern(event: &Event, graph: &SessionGraph, out: &mut
                         continue;
                     }
                 }
-                // No trust-zone factor: the model's argument may itself be
-                // the product of an upstream prompt injection, so we treat
-                // this finding as model-emitted-regardless-of-context.
-                let score = PATTERN_HIT_WEIGHT * Severity::High.weight();
-                out.push(Finding {
-                    finding_type: "argument_injection_pattern".into(),
-                    scope: FindingScope::Dynamic,
-                    severity: Severity::High,
-                    session_id: event.session_id.clone(),
-                    event_id: Some(event.event_id.clone()),
-                    tool: Some(tool.clone()),
-                    argument: Some(k.clone()),
-                    matched_value: Some(s.clone()),
-                    pattern: Some(label.into()),
-                    trust_zone: None,
-                    rationale: format!("flag- or shell-shaped pattern {label} in argument {k}"),
-                    score,
-                });
+                // #52: a driver touching its own Claude config home is
+                // designed behaviour (charter hook). HIGH only for a
+                // subagent actor or when the path span traces to external
+                // tool output; otherwise MEDIUM, and only if no other
+                // (genuinely dangerous) label also matches this argument.
+                if shell
+                    && label == "claude-config-path"
+                    && !is_sidechain(event)
+                    && !patterns::claude_config_spans(&s)
+                        .into_iter()
+                        .any(|sp| span_traces_to_external_result(sp, graph))
+                {
+                    demoted = Some(label);
+                    continue;
+                }
+                out.push(arg_injection_finding(
+                    event,
+                    &tool,
+                    k,
+                    &s,
+                    label,
+                    Severity::High,
+                ));
+                emitted = true;
                 break; // one finding per arg
             }
         }
+        if let (false, Some(label)) = (emitted, demoted) {
+            out.push(arg_injection_finding(
+                event,
+                &tool,
+                k,
+                &s,
+                label,
+                Severity::Medium,
+            ));
+        }
+    }
+}
+
+fn arg_injection_finding(
+    event: &Event,
+    tool: &str,
+    arg: &str,
+    value: &str,
+    label: &str,
+    severity: Severity,
+) -> Finding {
+    // No trust-zone factor: the model's argument may itself be the product
+    // of an upstream prompt injection, so we treat this finding as
+    // model-emitted-regardless-of-context.
+    Finding {
+        finding_type: "argument_injection_pattern".into(),
+        scope: FindingScope::Dynamic,
+        severity,
+        session_id: event.session_id.clone(),
+        event_id: Some(event.event_id.clone()),
+        tool: Some(tool.to_string()),
+        argument: Some(arg.to_string()),
+        matched_value: Some(value.to_string()),
+        pattern: Some(label.into()),
+        trust_zone: None,
+        rationale: format!("flag- or shell-shaped pattern {label} in argument {arg}"),
+        score: PATTERN_HIT_WEIGHT * severity.weight(),
     }
 }
 
@@ -1035,9 +1097,20 @@ pub fn instruction_shape_in_mcp_description(event: &Event, out: &mut Vec<Finding
 /// require a vision/audio model — outside zero-dep scope). What we can
 /// do: flag every multimodal tool_result so the operator knows the
 /// agent received a non-text input that COULD carry hidden instructions.
-/// Severity is MEDIUM by default, HIGH when the source is `untrusted_tool_output`.
-pub fn multimodal_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
+///
+/// Tool-class aware (#54): fires only when the producing tool is
+/// `directive::SourceClass::External` (web, mail, MCP, network-shaped, or
+/// unknown: fail toward scrutiny). Images from the user's own tools (Read,
+/// screenshots) are routine and do not fire. Severity is MEDIUM: the bytes
+/// are not analysed, so this is an exposure signal, not a verdict.
+pub fn multimodal_in_tool_result(event: &Event, graph: &SessionGraph, out: &mut Vec<Finding>) {
     if event.kind != EventKind::ToolResult {
+        return;
+    }
+    let external = tool_name_for_result(event, graph).map_or(true, |t| {
+        super::directive::source_class(&t) == super::directive::SourceClass::External
+    });
+    if !external {
         return;
     }
     let media_types = match event.body.get("media_types") {
@@ -1057,11 +1130,7 @@ pub fn multimodal_in_tool_result(event: &Event, out: &mut Vec<Finding>) {
     if names.is_empty() {
         return;
     }
-    let severity = if event.trust_zone == TrustZone::UntrustedToolOutput {
-        Severity::High
-    } else {
-        Severity::Medium
-    };
+    let severity = Severity::Medium;
     let score = PATTERN_HIT_WEIGHT * event.trust_zone.inverse_trust() * severity.weight();
     out.push(Finding {
         finding_type: "multimodal_in_tool_result".into(),

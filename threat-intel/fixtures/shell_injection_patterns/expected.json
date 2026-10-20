@@ -1,6 +1,6 @@
 {
   "fixture": "shell_injection_patterns",
-  "_note": "One tool_call per shell-tool pattern (#26; the .claude write also the .ssh upload trip the separate sensitive_zone_access): pipe-to-shell, base64-decode-then-exec, eval of fetched content, .claude config write, rm -rf non-temp, sensitive-file upload, reverse shell.",
+  "_note": "One tool_call per shell-tool pattern (#26; the .claude write also the .ssh upload trip the separate sensitive_zone_access): pipe-to-shell, base64-decode-then-exec, eval of fetched content, .claude config write, rm -rf non-temp, sensitive-file upload, reverse shell. Since #52 the .claude config write is MEDIUM here (driver actor, no untrusted source); its HIGH case is pinned in claude_config_actor_severity.",
   "expected_findings": [
     {
       "type": "argument_injection_pattern",
@@ -35,7 +35,7 @@
     {
       "type": "argument_injection_pattern",
       "scope": "dynamic",
-      "severity": "high"
+      "severity": "medium"
     },
     {
       "type": "sensitive_zone_access",
