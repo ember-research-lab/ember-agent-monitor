@@ -38,7 +38,7 @@ cargo build --release
 ./target/release/ember-agent init
 
 # Run the daemon (proxy on localhost:9452 + file-watcher)
-./target/release/ember-agent daemon --mode warn
+./target/release/ember-agent daemon --mode observe
 
 # In another terminal: point Claude Code (or any Anthropic-protocol
 # client) at the proxy:
@@ -70,7 +70,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/ember-research-lab/ember-agent-monitor/target/release/ember-agent daemon --mode warn --port 9452 --upstream-openai http://127.0.0.1:11436
+ExecStart=%h/ember-research-lab/ember-agent-monitor/target/release/ember-agent daemon --mode observe --port 9452 --upstream-openai http://127.0.0.1:11436
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -120,6 +120,22 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:9452 claude -p "reply with the single word o
 
 Claude Code posts `/v1/messages?beta=true`; the proxy routes on the path only and forwards the query upstream unchanged
 (regression test: `tests/claude_code_request_shape.rs`, #58).
+
+**What the Anthropic forwarder relays (#60).** The proxy forwards through `curl -i` and hands the client the upstream's own status,
+status text and headers (`request-id`, `retry-after`, `anthropic-ratelimit-*`, ...) minus hop-by-hop ones; a 401/429/529 stays a
+401/429/529, so Claude Code's auth and backoff logic works. `accept-encoding` is **stripped** on the way upstream so replies are
+plaintext for inspection; the cost is uncompressed replies (larger on the wire, loopback-to-curl-to-Anthropic only). If an upstream
+compresses anyway, header and bytes pass through unchanged (observe) or the request fails with a 502 naming #60 (warn/block, which
+cannot inspect or strip bytes they cannot read).
+
+| Anthropic reply shape | observe | warn / block |
+| --- | --- | --- |
+| JSON (`stream` absent/false), any status | relayed, tool_use/text analysed, findings logged | relayed, dangerous `tool_use` blocks stripped |
+| `stream: true` (SSE) | passed through chunked as it arrives; events inspected in flight (findings only, never rewritten) | **not supported**: `ember-agent daemon --mode warn\|block` refuses to start, and a library `serve` answers `stream:true` with 501 `ember_unsupported`, both naming #60 |
+| Upstream `Content-Encoding` despite stripped `accept-encoding` | passed through untouched, uninspected | 502 naming #60 |
+
+Warn/block need a stream-aware strip (buffering would defeat streaming and a silent pass-through would defeat the mode); until that
+lands run `--mode observe`. Tests: `tests/anthropic_forwarding.rs`.
 
 ## Detection layers
 
