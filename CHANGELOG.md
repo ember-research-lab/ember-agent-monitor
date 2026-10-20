@@ -8,6 +8,27 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+- **File-watcher watched nothing on a real Claude Code tree.** It only looked at the spec's
+  `<project>/sessions/*.jsonl`, which Claude Code does not write; real transcripts are
+  `<project>/<session>.jsonl` and `<project>/<session>/subagents/agent-*.jsonl`. It also dropped every
+  transcript line silently (not monitor-event shaped), ran no detectors, replayed from byte 0, could
+  consume a half-written line, and a failed event-log open panicked the thread. Now: all three layouts,
+  Claude Code `user`/`assistant` records converted through the Anthropic parser (tool_result stays
+  distinct from user_prompt) and run through the same record + detect path as proxy events, tail-from-EOF
+  for pre-existing files, complete lines only, and stderr (journal) lines for poll errors, malformed
+  lines and a 5-minute event/ignored/malformed tally.
+
+### Added
+- **`events.sock` is now actually served** (`ProxyContext` binds `<data_dir>/events.sock` and broadcasts every
+  recorded `tool_call`; it was specified in §6 and implemented in `net::socket` but never instantiated, so
+  `ember-network subscribe/monitor` could not connect). A bind failure is reported on stderr at startup.
+- **`ember-agent finalize-idle [--idle-secs N]`** writes `<sid>.summary.json` for sessions quiet for N seconds
+  (default 600) whose summary is missing/stale. Watched Claude Code sessions never emit `session_end`, so
+  without this ember-persistent never receives them. Exits non-zero if any session fails.
+- Watched transcripts get a synthesized `session_start` carrying `cwd` / `git_branch` / `model`, so the
+  summary's `cwd` (ember-persistent's workspace key) is real instead of empty.
+
 ### Changed
 - CI: every job has `timeout-minutes` (whale-signal#258).
 

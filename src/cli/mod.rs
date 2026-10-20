@@ -24,6 +24,7 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
         Some("findings") => cmd_findings(iter.collect()),
         Some("replay") => cmd_replay(iter.collect()),
         Some("calibrate") => cmd_calibrate(iter.collect()),
+        Some("finalize-idle") => cmd_finalize_idle(iter.collect()),
         Some("finalize-session") => cmd_finalize_session(iter.collect()),
         Some("--help") | Some("-h") | None => {
             print_help();
@@ -58,6 +59,8 @@ fn print_help() {
     eprintln!("                       Re-run detection over a recorded event log");
     eprintln!("  calibrate <events.jsonl> [...]");
     eprintln!("                       Compute a spectral baseline envelope from clean sessions");
+    eprintln!("  finalize-idle [--idle-secs N]");
+    eprintln!("                       Write summary.json for every session quiet for N s (600)");
     eprintln!("  finalize-session <session_id>");
     eprintln!("                       Write the session-end summary.json artifact");
     eprintln!("                       (consumed by the persistent tool)");
@@ -163,25 +166,46 @@ fn run_watcher(
     ctx: std::sync::Arc<crate::net::proxy::ProxyContext>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    use crate::watcher::{interpret_line, LineOutcome};
     use std::sync::atomic::Ordering;
     let mut state = crate::watcher::WatcherState::new();
+    let (mut ingested, mut ignored, mut malformed) = (0u64, 0u64, 0u64);
+    let mut seen_sessions = std::collections::HashSet::new();
+    let mut last_report = std::time::Instant::now();
     while !stop.load(Ordering::Relaxed) {
-        if let Ok(updates) = state.poll(&cfg) {
-            for (_path, lines) in updates {
-                for line in lines {
-                    if let Ok(ev) = crate::event::parse_jsonl_line(&line) {
-                        // Watcher events feed the same recorder as proxy events,
-                        // so the static graph (mcp_registration, hook_registration,
-                        // skill_load, plugin_install) lands in the session log.
-                        let mut writers = ctx.writers.lock().unwrap();
-                        let writer = writers.entry(ev.session_id.clone()).or_insert_with(|| {
-                            let p = ctx.store.session_log_path(&ev.session_id);
-                            crate::store::log::EventLogWriter::open(&p).expect("open event log")
-                        });
-                        let _ = writer.append(&ev);
+        match state.poll(&cfg) {
+            Ok(updates) => {
+                for (path, lines) in updates {
+                    for line in lines {
+                        match interpret_line(&line, &mut seen_sessions) {
+                            LineOutcome::Events(evs) => {
+                                // Same recorder + detectors as proxy events.
+                                for ev in evs {
+                                    ctx.record(&ev);
+                                    ctx.analyze(&ev);
+                                    ingested += 1;
+                                }
+                            }
+                            LineOutcome::NotConversation => ignored += 1,
+                            LineOutcome::Malformed(why) => {
+                                malformed += 1;
+                                eprintln!(
+                                    "ember-agent: watcher — dropped malformed line in {}: {why}",
+                                    path.display()
+                                );
+                            }
+                        }
                     }
                 }
             }
+            // Fail loud: a poll error means the watcher is blind this tick.
+            Err(e) => eprintln!("ember-agent: watcher — poll failed: {e}"),
+        }
+        if last_report.elapsed() >= std::time::Duration::from_secs(300) {
+            eprintln!(
+                "ember-agent: watcher — events={ingested} non_conversation={ignored} malformed={malformed} (last 5m cumulative)"
+            );
+            last_report = std::time::Instant::now();
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
@@ -410,17 +434,92 @@ fn cmd_finalize_session(args: Vec<String>) -> Result<u8, String> {
         cfg.data_dir = d;
     }
     let store = crate::store::Store::open(&cfg.data_dir)?;
+    let dest = finalize_one(&store, &session_id)?;
+    println!("wrote {}", dest.display());
+    Ok(0)
+}
+
+/// `finalize-idle [--idle-secs N] [--data-dir D]` — write `<sid>.summary.json`
+/// for every session log that has been quiet for N seconds (default 600) and
+/// whose summary is missing or older than the log. Watched Claude Code
+/// sessions never emit `session_end`, so this is what hands them to
+/// ember-persistent. Any per-session failure is printed and makes the exit
+/// code non-zero.
+fn cmd_finalize_idle(args: Vec<String>) -> Result<u8, String> {
+    let mut cfg = DaemonConfig::default();
+    let mut idle_secs: u64 = 600;
+    let mut iter = args.into_iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--idle-secs" => {
+                idle_secs = iter
+                    .next()
+                    .ok_or("--idle-secs requires a value")?
+                    .parse()
+                    .map_err(|e| format!("invalid --idle-secs: {e}"))?;
+            }
+            "--data-dir" => {
+                cfg.data_dir = PathBuf::from(iter.next().ok_or("--data-dir requires a value")?)
+            }
+            other => return Err(format!("unknown finalize-idle flag: {other}")),
+        }
+    }
+    let store = crate::store::Store::open(&cfg.data_dir)?;
+    let dir = cfg.data_dir.join("sessions");
+    let now = std::time::SystemTime::now();
+    let (mut done, mut failed) = (0u32, 0u32);
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| format!("read {dir:?}: {e}"))?
+        .flatten()
+    {
+        let path = entry.path();
+        let Some(sid) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".jsonl"))
+        else {
+            continue;
+        };
+        let log_mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .map_err(|e| format!("stat {path:?}: {e}"))?;
+        let quiet = now
+            .duration_since(log_mtime)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            >= idle_secs;
+        let summary_mtime = std::fs::metadata(store.summary_path(sid)).and_then(|m| m.modified());
+        let stale = match summary_mtime {
+            Ok(t) => t < log_mtime,
+            Err(_) => true,
+        };
+        if quiet && stale {
+            match finalize_one(&store, sid) {
+                Ok(_) => done += 1,
+                Err(e) => {
+                    failed += 1;
+                    eprintln!("ember-agent: finalize-idle — {sid}: {e}");
+                }
+            }
+        }
+    }
+    println!("finalize-idle: {done} finalized, {failed} failed");
+    Ok(if failed == 0 { 0 } else { 1 })
+}
+
+fn finalize_one(store: &crate::store::Store, session_id: &str) -> Result<PathBuf, String> {
+    let session_id = session_id.to_string();
     let log_path = store.session_log_path(&session_id);
     if !log_path.exists() {
         return Err(format!("no session log at {}", log_path.display()));
     }
+    let detection_cfg = crate::detect::DetectionConfig::default();
     // Replay events into a graph, run detection, build + write the summary.
     let events = crate::store::log::read_all(&log_path)?;
     let mut graph = crate::graph::SessionGraph::default();
     for ev in events.iter().cloned() {
         graph.ingest(ev);
     }
-    let detection_cfg = crate::detect::DetectionConfig::default();
     let findings = crate::detect::run_all(&events, &detection_cfg);
     let mut summary = crate::store::summary::SessionSummary::build(
         &session_id,
@@ -455,8 +554,7 @@ fn cmd_finalize_session(args: Vec<String>) -> Result<u8, String> {
     }
     let dest = store.summary_path(&session_id);
     summary.save(&dest)?;
-    println!("wrote {}", dest.display());
-    Ok(0)
+    Ok(dest)
 }
 
 fn normalized_heat_envelope(
