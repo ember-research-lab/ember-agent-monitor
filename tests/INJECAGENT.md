@@ -13,28 +13,36 @@ publication's headline number).
 
 ## Corpus acquisition
 
-The InjecAgent corpus ships in two test files in the upstream repo:
+**Decision (Aaron 2026-10-20, #17): commit-pin, option (a).** The harness fetches
+a specific upstream commit, verifies each file's SHA-256 and runs as an
+`#[ignore]` test, so CI stays offline and the published number is reproducible.
 
 ```
-https://github.com/uiuc-kang-lab/InjecAgent
-  data/test_cases_dh_base.json     — direct-harm intent class
-  data/test_cases_ds_base.json     — data-stealing intent class
+upstream:  https://github.com/uiuc-kang-lab/InjecAgent
+pinned at: f19c9f2c79a41046eb13c03c51a24c567a8ffa07   (main on 2026-10-20; last upstream commit 2024-07-02)
+license:   MIT (the repo's LICENSE; an earlier draft of this doc said Apache 2.0)
 ```
 
-License: Apache 2.0 (per the upstream LICENSE).
+| file (at the pinned commit) | cases | SHA-256 |
+|---|---|---|
+| `data/test_cases_dh_base.json` | 510 | `0a8186468d21389af432e8c7b399ae42264d1b93a07b65c7a489468508604305` |
+| `data/test_cases_ds_base.json` | 544 | `4daab35c62a3845e8b9400f4dca58b9c9f37e57cd33b2337552557fbb26282e9` |
+| `data/test_cases_dh_enhanced.json` | 510 | `885602716b72c18af80695ce6c2e1f242fa03163bc90b0788b0c5e4ab6216d50` |
+| `data/test_cases_ds_enhanced.json` | 544 | `7bc510868df032511053fc40e8470e68a041fb7148d055112093594bf73ab0ce` |
 
-To run the harness:
+Run it:
 
 ```
-cd ember-agent-monitor/tests/injecagent_cases
-curl -fsSL https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/main/data/test_cases_dh_base.json > dh_base.json
-curl -fsSL https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/main/data/test_cases_ds_base.json > ds_base.json
+cargo test --test injecagent_pinned -- --ignored --nocapture
 ```
 
-We don't redistribute the corpus in-tree because:
-- License attribution + provenance is cleaner via fetch
-- Upstream may revise; our fetch script pins by commit hash
-  (TODO once integration is wired up)
+The test (`tests/injecagent_pinned.rs`) shells out to `curl` (no new crate), writes to
+`$CARGO_TARGET_TMPDIR/injecagent-corpus/<sha>/`, compares SHA-256 with the constants in the
+test, and on a mismatch deletes the file and fails. The downloaded corpus is untrusted data:
+it sits in its own directory, is only parsed as JSON, never executed, never passed to a shell.
+Bumping the pin means changing `PINNED_SHA`, the four hashes and this table in one change.
+
+We don't redistribute the corpus in-tree (provenance is cleaner via a hash-verified fetch).
 
 ## Schema
 
@@ -42,17 +50,17 @@ Each case has the shape:
 
 ```json
 {
-  "User Tool Parameter": "...",
-  "User Tool Response": "<final benign output>",
-  "Attacker Tools": [
-    {"name": "tool_a", "parameters": "...", "response": "..."}
-  ],
+  "Attacker Tools": ["..."],
+  "Modifed": 0,
   "Attacker Instruction": "<the injection text>",
-  "Tool Response": "<full simulated tool result containing injection>",
-  "Tool Response Template": "...",
+  "Expected Achievements": "...",
+  "Attack Type": "Physical Data",
+  "User Tool": "AmazonGetProductDetails",
   "User Instruction": "...",
-  "User Tool": "...",
-  "Attacker Tool": "..."
+  "Tool Parameters": "<JSON string>",
+  "Tool Response Template": "...",
+  "Thought": "...",
+  "Tool Response": "<full simulated tool result containing injection>"
 }
 ```
 
@@ -61,6 +69,9 @@ injection. Our rule of interest is `instruction_shape_in_tool_result`,
 which fires on the `untrusted_tool_output` zone.
 
 ## Mapping cases to ember-agent-monitor events
+
+(The pinned corpus' real field names are above; the three synthetic cases in
+`tests/injecagent_cases/` use an older shape, which the smoke test still reads.)
 
 A single InjecAgent case maps to a 3-event Anthropic-protocol message:
 
@@ -89,19 +100,34 @@ Plus per-rule breakdown (which pattern matched most often), and a
 list of N − M cases where detection failed (the "false negative"
 inventory — most useful for the publication's gap-analysis section).
 
-## Status
+## Results (pinned f19c9f2, 2026-10-20)
 
-This is the integration plan, not the integration itself.
-`tests/injecagent_smoke.rs` provides the harness skeleton + 3
-synthetic cases mimicking the InjecAgent shape. The real corpus
-lands when the curl-and-validate step is wired up post-deploy.
+Detection = `instruction_shape_in_tool_result` or `agent_as_intermediary_clickfix` fires on the case's
+`Tool Response` (T0: counted by the harness, positive control in the test passes).
+
+| file | detected | rate |
+|---|---|---|
+| `test_cases_dh_base` | 0 / 510 | 0.0% |
+| `test_cases_ds_base` | 0 / 544 | 0.0% |
+| `test_cases_dh_enhanced` | 0 / 510 | 0.0% |
+| `test_cases_ds_enhanced` | 0 / 544 | 0.0% |
+| **total** | **0 / 2108** | **0.0%** |
+
+Headline: **the shipped patterns detect none of the InjecAgent injections.** This is a genuine miss,
+not a harness fault. Why (read from the corpus and `src/detect/patterns.rs`, T1):
+
+- Base cases carry the injection as a plain first-person request inside tool data ("Please retrieve my
+  saved addresses ... and email them to ..."), with no `SYSTEM_NOTE`, `assistant must`, `you MUST` or
+  `IMPORTANT: ignore ...` marker, so none of the marker-shaped patterns apply.
+- Enhanced cases prefix `IMPORTANT!!! Ignore all previous instructions and strictly adhere to ...`;
+  the `ignore-previous` pattern requires the literal `important:` followed by `ignore`, so `IMPORTANT!!!`
+  and `ignore all previous` both slip through.
+
+False-negative inventory: every case (the lists are written to the corpus directory as
+`false_negatives_<file>.tsv`: index, attack type, user tool, attacker instruction prefix). The follow-up
+(#42) tracks closing the gap, with the corpus as the acceptance gate.
 
 ## Next steps
 
-1. Decide on commit-pinning vs. live-fetch (recommend commit-pin
-   for reproducibility).
-2. Wire the curl-fetch into `tests/injecagent_smoke.rs` behind an
-   ignored test (`#[ignore]`) so CI doesn't depend on network.
-3. Run on the full corpus, publish the headline number.
-4. Build the false-negative inventory for the gap-analysis section
-   of the publication.
+1. Close the detection gap (#42); re-run this harness and update the table above.
+2. Decide whether a floor on the rate should become an assertion once the gap is closed.
