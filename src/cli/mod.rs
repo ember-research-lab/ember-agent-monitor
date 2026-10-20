@@ -5,6 +5,7 @@
 //!   ember-agent daemon   — run the proxy + file-watcher
 //!   ember-agent status   — show daemon health, fidelity status
 //!   ember-agent findings — query the findings log
+//!   ember-agent cost     — token and list-price accounting from transcript usage
 //!   ember-agent replay   — re-run detection on an event log or a raw transcript (--transcript)
 //!
 //! No clap dep; vetpkg-style hand-rolled arg parser.
@@ -22,6 +23,7 @@ pub fn run(args: Vec<String>) -> Result<u8, String> {
         Some("daemon") => cmd_daemon(iter.collect()),
         Some("status") => cmd_status(iter.collect()),
         Some("findings") => cmd_findings(iter.collect()),
+        Some("cost") => cmd_cost(iter.collect()),
         Some("replay") => cmd_replay(iter.collect()),
         Some("calibrate") => cmd_calibrate(iter.collect()),
         Some("finalize-idle") => cmd_finalize_idle(iter.collect()),
@@ -55,6 +57,12 @@ fn print_help() {
     eprintln!("  status               Show daemon health and fidelity status");
     eprintln!("  findings [--session S]");
     eprintln!("                       List findings (optionally for one session)");
+    eprintln!(
+        "  cost [--since YYYY-MM-DD] [--session ID] [--by model|actor|project|session|day|week]"
+    );
+    eprintln!("       [--json] [--strict] [--root DIR] [--prices FILE]");
+    eprintln!("                       Token and list-price cost from transcript usage (UNPRICED model = loud row;");
+    eprintln!("                       --strict exits 3 on any)");
     eprintln!("  replay <events.jsonl> | --transcript <transcript.jsonl>");
     eprintln!("                       Re-run detection over a recorded event log");
     eprintln!("  calibrate <events.jsonl> [...]");
@@ -64,6 +72,10 @@ fn print_help() {
     eprintln!("  finalize-session <session_id>");
     eprintln!("                       Write the session-end summary.json artifact");
     eprintln!("                       (consumed by the persistent tool)");
+}
+
+fn cmd_cost(args: Vec<String>) -> Result<u8, String> {
+    crate::cost::run_cli(args, DaemonConfig::default().watch_dir).map_err(|e| e.to_string())
 }
 
 fn cmd_init(_args: Vec<String>) -> Result<u8, String> {
@@ -209,6 +221,10 @@ fn run_watcher(
                 "ember-agent: watcher — events={ingested} non_conversation={ignored} malformed={malformed} (last 5m cumulative)"
             );
             last_report = std::time::Instant::now();
+            // Cost roll-up on the same cadence (#63). Fail loud, keep watching.
+            if let Err(e) = crate::cost::write_rollup(&cfg.watch_dir, &cfg.data_dir) {
+                eprintln!("ember-agent: watcher — cost roll-up failed: {e}");
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }

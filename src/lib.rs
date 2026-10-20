@@ -22,6 +22,7 @@
 #![allow(clippy::field_reassign_with_default)]
 
 pub mod cli;
+pub mod cost;
 pub mod crypto;
 pub mod detect;
 pub mod egress;
