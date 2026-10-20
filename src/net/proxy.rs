@@ -90,6 +90,11 @@ impl ProxyContext {
     }
 
     pub fn record(&self, event: &Event) {
+        self.record_from(event, crate::net::socket::Source::Proxy);
+    }
+
+    /// `record`, naming the ingest path for the events.sock `source` field.
+    pub fn record_from(&self, event: &Event, source: crate::net::socket::Source) {
         let mut writers = self.writers.lock().unwrap();
         let writer = writers.entry(event.session_id.clone()).or_insert_with(|| {
             let path = self.store.session_log_path(&event.session_id);
@@ -99,7 +104,7 @@ impl ProxyContext {
         drop(writers);
         if event.kind == crate::types::EventKind::ToolCall {
             if let Some(sock) = &self.events_sock {
-                sock.broadcast(event);
+                sock.broadcast(event, source);
             }
         }
     }

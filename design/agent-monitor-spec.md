@@ -230,7 +230,7 @@ After 5 consecutive blocks within a session, the monitor pauses interception and
 
 **Session graph artifacts.** At session end (or on demand), the monitor emits the full execution graph as a JSONL file under `~/.ember/agent-monitor/sessions/<session-id>.jsonl`. Schema documented. Consumed by the persistent tool when installed.
 
-**Tool-call event stream.** While running, the monitor emits tool-call events to a Unix socket at `~/.ember/agent-monitor/events.sock`. The network tool subscribes to this stream and correlates against observed network connections by timing and process. Loose temporal coupling — both tools share wall-clock and process tree, no direct state sharing.
+**Tool-call event stream.** While running, the monitor emits tool-call events to a Unix socket at `~/.ember/agent-monitor/events.sock`. The network tool subscribes to this stream and correlates against observed network connections by timing and process. Lines come from the proxy and from the file-watcher in one shape, with an additive `source` (`proxy`|`watcher`); a `tool_use_id` is emitted once. Loose temporal coupling — both tools share wall-clock and process tree, no direct state sharing.
 
 ### No tight coupling
 
