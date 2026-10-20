@@ -110,6 +110,17 @@ to raise a session's posture (exec and egress rules bump one severity step, one 
 Claude Code only goes through the proxy if `ANTHROPIC_BASE_URL=http://127.0.0.1:9452` is set in its
 environment; without it the watcher is the only view (no intervention, observe/warn findings only).
 
+**Before adding `ANTHROPIC_BASE_URL`:** Claude Code reads `env` from `settings.json` live, so a broken proxy kills the *running*
+session (any non-2xx from the messages endpoint is shown as "the selected model may not exist"). Run the acceptance check first,
+with the env var on the command line only, and expect `ok`:
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:9452 claude -p "reply with the single word ok" --model opus
+```
+
+Claude Code posts `/v1/messages?beta=true`; the proxy routes on the path only and forwards the query upstream unchanged
+(regression test: `tests/claude_code_request_shape.rs`, #58).
+
 ## Detection layers
 
 - **v0 substrate** — HTTP proxy, file-watcher, append-only event log,
