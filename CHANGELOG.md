@@ -8,6 +8,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+- **Benchmark harness (#42).** Converters for InjecAgent, AgentDojo, BIPIA, Open-Prompt-Injection, ASB and LLMail-Inject, 3-case offline
+  fixtures, and an `#[ignore]` full-corpus run with a 70/30 split and a benign-transcript FP replay. See `tests/bench/README.md`.
 ### Fixed
 - **`argument_injection_pattern` no longer fires HIGH on benign shell commands (#26).** The rule is tool-class
   aware: shell tools (`Bash`, names containing `shell`/`exec`) get their own pattern list (pipe-to-shell,
