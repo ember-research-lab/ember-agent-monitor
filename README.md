@@ -58,6 +58,38 @@ claude   # or your agent of choice
 # session graph was recorded (200 {events, responses} / 404 no_session).
 ```
 
+### Run as a user service
+
+A systemd user unit keeps the daemon up across logins and restarts it on failure.
+Save as `~/.config/systemd/user/ember-agent-monitor.service`:
+
+```ini
+[Unit]
+Description=Ember Agent Monitor (proxy on 127.0.0.1:9452 + file-watcher)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/ember-research-lab/ember-agent-monitor/target/release/ember-agent daemon --mode warn --port 9452 --upstream-openai http://127.0.0.1:11436
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now ember-agent-monitor.service
+curl -s http://127.0.0.1:9452/health          # {"status":"ok","tool":"ember-agent-monitor"}
+curl -s http://127.0.0.1:9452/openai/health   # relayed from the local llama-server
+journalctl --user -u ember-agent-monitor -f
+```
+
+`--upstream-openai` points `/openai/*` at the local llama-server (ember-local); drop it if
+you do not use that lane.
+
 ## Dogfood (Aaron's Claude Code sessions)
 
 User service `~/.config/systemd/user/ember-agent-monitor.service` runs the daemon in warn mode; the

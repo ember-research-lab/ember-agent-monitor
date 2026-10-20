@@ -28,6 +28,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   without this ember-persistent never receives them. Exits non-zero if any session fails.
 - Watched transcripts get a synthesized `session_start` carrying `cwd` / `git_branch` / `model`, so the
   summary's `cwd` (ember-persistent's workspace key) is real instead of empty.
+### Added
+- docs: README "Run as a user service" — systemd user unit running `daemon --mode warn` with the
+  `/openai` upstream pointed at the local llama-server.
 
 ### Changed
 - CI: every job has `timeout-minutes` (whale-signal#258).
