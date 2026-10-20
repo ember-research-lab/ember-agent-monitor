@@ -1,0 +1,16 @@
+{
+  "fixture": "directive_in_tool_result",
+  "_note": "Plain-language indirect injection (request on the user's behalf plus concealment) in a fetched review is flagged by instruction_directive_in_tool_result (MEDIUM). The innocuous spec page and a local README that says 'Please run the tests' stay silent: local-tool output is discounted and ordinary prose has no directive shape. Wording is original, not taken from any benchmark corpus.",
+  "expected_findings": [
+    {
+      "type": "instruction_directive_in_tool_result",
+      "scope": "dynamic",
+      "severity": "medium"
+    },
+    {
+      "type": "spectral_motif_match",
+      "scope": "static",
+      "severity": "medium"
+    }
+  ]
+}

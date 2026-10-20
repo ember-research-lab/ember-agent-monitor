@@ -9,6 +9,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Added
+- **`instruction_directive_in_tool_result` (MEDIUM, #42).** Scores untrusted tool output for *directive shape* (request verb plus
+  first-person or destination cues, override of earlier instructions, role claims, concealment, tool-invocation requests) instead of
+  literal markers. Local file/shell/subagent tool output is discounted.
 - **Benchmark harness (#42).** Converters for InjecAgent, AgentDojo, BIPIA, Open-Prompt-Injection, ASB and LLMail-Inject, 3-case offline
   fixtures, and an `#[ignore]` full-corpus run with a 70/30 split and a benign-transcript FP replay. See `tests/bench/README.md`.
 ### Fixed

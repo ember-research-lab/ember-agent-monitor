@@ -6,6 +6,10 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Added — `instruction_directive_in_tool_result` (#42)
+- MEDIUM, dynamic. Fixture `directive_in_tool_result` (one injected review flagged; clean spec page and local README silent).
+  Known shift: `acronis_hf_readme_sidecar_inject`, `acronis_hf_skill_md_inject`, `clawhavoc_clickfix_jan2026` and
+  `pliny_indirect_via_kb_ref` each gain one MEDIUM finding because their injected text is also directive-shaped.
 ### Changed — `argument_injection_pattern` is tool-class aware (#26)
 - Shell tools use `shell_injection_patterns()`; other tools keep `arg_injection_patterns()`. New fixtures:
   `benign_shell_session` (calibration: zero findings on ordinary shell work) and `shell_injection_patterns`
