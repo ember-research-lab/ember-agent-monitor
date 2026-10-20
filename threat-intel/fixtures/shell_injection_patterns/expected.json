@@ -1,0 +1,51 @@
+{
+  "fixture": "shell_injection_patterns",
+  "_note": "One tool_call per shell-tool pattern (#26; the .claude write also the .ssh upload trip the separate sensitive_zone_access): pipe-to-shell, base64-decode-then-exec, eval of fetched content, .claude config write, rm -rf non-temp, sensitive-file upload, reverse shell.",
+  "expected_findings": [
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "argument_injection_pattern",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    },
+    {
+      "type": "sensitive_zone_access",
+      "scope": "dynamic",
+      "severity": "high"
+    }
+  ]
+}
