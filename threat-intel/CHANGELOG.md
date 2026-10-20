@@ -15,6 +15,8 @@ versions tracking the package's `Cargo.toml` `version`.
 ### Added — `posture_elevated` marker (#27, #31)
 - MEDIUM, dynamic, once per session; emitted when a sibling-tool finding raises the session posture. Not covered
   by a fixture directory (the fixture runner has no `$HOME`); pinned by `tests/session_posture.rs` instead.
+### Added — `memory_write_by_subagent` (#32)
+- HIGH per-session rule; fixtures `subagent_memory_write` (2 HIGH of 3 writes) and `main_agent_memory_write` (none).
 
 ### Added — `invisible_unicode_in_tool_result` + tag-decoded rescan (closes the tag-char fixture)
 - New rule `invisible_unicode_in_tool_result` (MEDIUM, `untrusted_tool_output`). Classes: unicode-tag,
