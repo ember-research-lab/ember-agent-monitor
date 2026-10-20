@@ -181,7 +181,7 @@ fn run_watcher(
                             LineOutcome::Events(evs) => {
                                 // Same recorder + detectors as proxy events.
                                 for ev in evs {
-                                    ctx.record(&ev);
+                                    ctx.record_from(&ev, crate::net::socket::Source::Watcher);
                                     ctx.analyze(&ev);
                                     ingested += 1;
                                 }

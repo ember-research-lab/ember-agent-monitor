@@ -9,6 +9,11 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Fixed
+- **`events.sock` tool_calls are tagged and de-duplicated (#35).** Watcher-derived tool_calls (transcripts
+  read with Claude Code not routed through the proxy) are broadcast on `events.sock` in the same line shape as
+  proxy-derived ones, now with an additive top-level `source: "watcher" | "proxy"`. A `tool_use_id` is
+  broadcast once even when a session is both proxied and watched (bounded 4096-entry FIFO, no new crate).
+  A daemon started before #29 never bound the socket: restart it to pick this up.
 - **File-watcher watched nothing on a real Claude Code tree.** It only looked at the spec's
   `<project>/sessions/*.jsonl`, which Claude Code does not write; real transcripts are
   `<project>/<session>.jsonl` and `<project>/<session>/subagents/agent-*.jsonl`. It also dropped every

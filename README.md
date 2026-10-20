@@ -102,7 +102,7 @@ journalctl --user -u ember-agent-monitor -n 20       # "watcher — events=… m
 ./target/release/ember-agent findings                # detector output, incl. watched transcripts
 ```
 
-Suite wiring: the daemon serves `~/.ember/agent-monitor/events.sock` (tool_calls → `ember-network monitor`);
+Suite wiring: the daemon serves `~/.ember/agent-monitor/events.sock` (tool_calls → `ember-network monitor`, from both the proxy and the file-watcher, each line tagged `source`, one line per `tool_use_id`);
 `ember-agent finalize-idle` (run by ember-persistent's ingest timer, see that repo's `contrib/systemd/`)
 hands quiet sessions to ember-persistent.
 
