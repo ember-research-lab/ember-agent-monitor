@@ -405,7 +405,11 @@ pub fn clickfix_patterns() -> &'static [(&'static str, Matcher)] {
                 let mut search_from = 0;
                 while let Some(pos) = l[search_from..].find(opener) {
                     let abs = search_from + pos;
-                    let window_end = (abs + 80).min(l.len());
+                    let mut window_end = (abs + 80).min(l.len());
+                    // `l` is arbitrary tool output: never slice inside a multibyte char.
+                    while !l.is_char_boundary(window_end) {
+                        window_end -= 1;
+                    }
                     let window = &l[abs..window_end];
                     let has_shell = shells.iter().any(|sh| window.contains(sh));
                     let has_act = acts.iter().any(|act| window.contains(act));
@@ -1004,8 +1008,9 @@ fn find_command_chain(s: &str) -> Option<()> {
     ];
     while i < bytes.len() {
         let chain_marker = bytes[i] == b';'
-            || (i + 1 < bytes.len() && (bytes[i] == b'&' && bytes[i + 1] == b'&')
-                || (bytes[i] == b'|' && bytes[i + 1] == b'|'));
+            || (i + 1 < bytes.len()
+                && ((bytes[i] == b'&' && bytes[i + 1] == b'&')
+                    || (bytes[i] == b'|' && bytes[i + 1] == b'|')));
         if chain_marker {
             let mut j = i + 1;
             // For && / || skip the second byte too.
@@ -1417,5 +1422,24 @@ mod tests {
             assert!(invisible_codepoint_classes(s).is_empty(), "{s:?}");
             assert!(decode_hidden_payloads(s).is_empty(), "{s:?}");
         }
+    }
+
+    /// #46: replaying real transcripts panicked here. A byte window ending inside
+    /// a multibyte char (curly apostrophe after "open ") must not slice.
+    #[test]
+    fn clickfix_window_survives_multibyte_text() {
+        let text = format!("open {}\u{2019}s notes and then some", "x".repeat(74));
+        for (_l, m) in clickfix_patterns() {
+            let _ = m(&text);
+        }
+    }
+
+    /// #46: a lone trailing `|` indexed one past the end.
+    #[test]
+    fn command_chain_scan_survives_trailing_pipe() {
+        for s in ["a |", "|", "a ;", "x &", "||", "&&"] {
+            let _ = find_command_chain(s);
+        }
+        assert!(find_command_chain("ls && rm -rf x").is_some());
     }
 }
