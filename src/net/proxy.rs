@@ -51,6 +51,9 @@ pub struct ProxyContext {
     pub finding_writers: Mutex<HashMap<String, EventLogWriter>>,
     /// session_id → running graph snapshot (for static rule recompute).
     pub graphs: Mutex<HashMap<String, SessionGraph>>,
+    /// `<data_dir>/events.sock` — tool_call stream for ember-network (spec §6).
+    /// `None` only if the bind failed, which is reported on stderr at startup.
+    pub events_sock: Option<Arc<crate::net::socket::EventSocket>>,
 }
 
 impl ProxyContext {
@@ -65,6 +68,16 @@ impl ProxyContext {
         if let Ok(b) = crate::spectral::Baseline::load(&user_baseline) {
             detection.spectral_baseline = Some(b);
         }
+        let sock_path = config.data_dir.join("events.sock");
+        let events_sock = match crate::net::socket::EventSocket::open(&sock_path) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!(
+                    "ember-agent: events.sock unavailable, ember-network cannot subscribe: {e}"
+                );
+                None
+            }
+        };
         Ok(Self {
             config,
             store,
@@ -72,6 +85,7 @@ impl ProxyContext {
             writers: Mutex::new(HashMap::new()),
             finding_writers: Mutex::new(HashMap::new()),
             graphs: Mutex::new(HashMap::new()),
+            events_sock,
         })
     }
 
@@ -82,6 +96,12 @@ impl ProxyContext {
             EventLogWriter::open(&path).expect("open event log")
         });
         let _ = writer.append(event);
+        drop(writers);
+        if event.kind == crate::types::EventKind::ToolCall {
+            if let Some(sock) = &self.events_sock {
+                sock.broadcast(event);
+            }
+        }
     }
 
     /// Public alias for the internal finding recorder. Used by handlers

@@ -90,6 +90,25 @@ journalctl --user -u ember-agent-monitor -f
 `--upstream-openai` points `/openai/*` at the local llama-server (ember-local); drop it if
 you do not use that lane.
 
+## Dogfood (Aaron's Claude Code sessions)
+
+User service `~/.config/systemd/user/ember-agent-monitor.service` runs the daemon in warn mode; the
+file-watcher tails `~/.claude/projects/**` (live activity only, not history).
+
+```bash
+systemctl --user status ember-agent-monitor          # running?
+journalctl --user -u ember-agent-monitor -n 20       # "watcher — events=… malformed=…" tally every 5 min
+./target/release/ember-agent status                  # proxy / watch_dir / sessions
+./target/release/ember-agent findings                # detector output, incl. watched transcripts
+```
+
+Suite wiring: the daemon serves `~/.ember/agent-monitor/events.sock` (tool_calls → `ember-network monitor`);
+`ember-agent finalize-idle` (run by ember-persistent's ingest timer, see that repo's `contrib/systemd/`)
+hands quiet sessions to ember-persistent.
+
+Claude Code only goes through the proxy if `ANTHROPIC_BASE_URL=http://127.0.0.1:9452` is set in its
+environment; without it the watcher is the only view (no intervention, observe/warn findings only).
+
 ## Detection layers
 
 - **v0 substrate** — HTTP proxy, file-watcher, append-only event log,
