@@ -6,6 +6,13 @@ versions tracking the package's `Cargo.toml` `version`.
 
 ## [Unreleased]
 
+### Changed — `argument_injection_pattern` is tool-class aware (#26)
+- Shell tools use `shell_injection_patterns()`; other tools keep `arg_injection_patterns()`. New fixtures:
+  `benign_shell_session` (calibration: zero findings on ordinary shell work) and `shell_injection_patterns`
+  (one `Bash` call per pattern, HIGH each). `inverseprompt_quoted_chain` stays pinned HIGH, now via the
+  `sensitive-file-upload` shell pattern (fetcher + upload flag + credential file) rather than the quoted `;`.
+- Known shift: a quoted `; rm` / `&& curl` inside a `Bash` argument no longer fires by itself.
+
 ### Added — `invisible_unicode_in_tool_result` + tag-decoded rescan (closes the tag-char fixture)
 - New rule `invisible_unicode_in_tool_result` (MEDIUM, `untrusted_tool_output`). Classes: unicode-tag,
   private-use (ASCII-shift band + supplementary planes), bidi-control (overrides/isolates),
