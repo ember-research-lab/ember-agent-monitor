@@ -105,6 +105,9 @@ fn cmd_daemon(args: Vec<String>) -> Result<u8, String> {
             _ => return Err(format!("unknown daemon flag: {arg}")),
         }
     }
+    if cfg.mode != InterventionMode::Observe {
+        return Err(crate::net::proxy::stream_unsupported_message(cfg.mode));
+    }
     eprintln!(
         "ember-agent: daemon — mode={} port={} data={}",
         cfg.mode.as_str(),

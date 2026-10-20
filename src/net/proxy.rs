@@ -3,7 +3,9 @@
 //! Listens on localhost (HTTP only — loopback never needs TLS), routes
 //! requests by URL path to a `Protocol`-specific parser (`Anthropic` or
 //! `OpenAI`), records them as `Event`s, forwards upstream via system
-//! `curl`, parses the response, records it, and returns to the client.
+//! `curl -i`, parses the response, records it, and relays it to the client with
+//! the upstream's own status and headers (#60). SSE replies stream through in
+//! observe mode; warn/block need a buffered body and refuse streams.
 //!
 //! Path-prefix routing (see `proto::Protocol::for_path`) is intentional:
 //! auto-detection by body shape was rejected because it makes
@@ -29,7 +31,7 @@ use crate::types::{
     DaemonConfig, EventKind, FidelityStatus, InterventionMode, Severity, TrustZone,
 };
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -275,7 +277,12 @@ fn handle_connection(mut stream: TcpStream, ctx: Arc<ProxyContext>) {
         HttpResponse::ok_json(br#"{"status":"ok","tool":"ember-agent-monitor"}"#.to_vec())
     } else if req.method == "POST" {
         match Protocol::for_path(&req.path) {
-            Some(protocol) => handle_messages(&req, &ctx, protocol),
+            Some(protocol) => {
+                // Writes its own reply: upstream status/headers are relayed
+                // and SSE streams as they arrive (#60).
+                handle_messages(&req, &ctx, protocol, &mut stream);
+                return;
+            }
             None => HttpResponse {
                 status: 404,
                 status_text: "Not Found".into(),
@@ -349,14 +356,26 @@ pub(crate) fn ingest_request(
     (session_id, high_findings)
 }
 
-fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) -> HttpResponse {
+fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol, out: &mut TcpStream) {
     let (session_id, high_findings) = ingest_request(req, ctx, protocol);
 
+    // Warn/block must be able to rewrite the reply; a stream cannot be
+    // rewritten yet (#60), so refuse loudly instead of forwarding unchecked.
+    if protocol == Protocol::Anthropic
+        && ctx.config.mode != InterventionMode::Observe
+        && request_wants_stream(&req.body)
+    {
+        let _ = stream_unsupported_response(ctx.config.mode).write_to(out);
+        return;
+    }
+
+    let mut body = req.body.clone();
     // Forward-direction intervention.
     match ctx.config.mode {
         InterventionMode::Block if !high_findings.is_empty() => {
             let reason = format_refusal(&high_findings);
-            return HttpResponse::refusal(&reason);
+            let _ = HttpResponse::refusal(&reason).write_to(out);
+            return;
         }
         InterventionMode::Warn if !high_findings.is_empty() => {
             // Append a system-prompt warning to the outbound request.
@@ -369,24 +388,10 @@ fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) ->
             // forward-warn path needs more care to preserve message
             // ordering. Backward strip works for both protocols (the
             // committed-model invariant is the real safety mechanism).
-            let body = if protocol == Protocol::Anthropic {
-                inject_system_warning(&req.body, &high_findings).unwrap_or_else(|| req.body.clone())
-            } else {
-                req.body.clone()
-            };
-            let upstream_url = format!(
-                "{}{}",
-                ctx.config.upstream_for(protocol),
-                protocol.upstream_path(&req.path)
-            );
-            return forward_and_intervene(
-                &upstream_url,
-                &body,
-                &req.headers,
-                ctx,
-                &session_id,
-                protocol,
-            );
+            if protocol == Protocol::Anthropic {
+                body = inject_system_warning(&req.body, &high_findings)
+                    .unwrap_or_else(|| req.body.clone());
+            }
         }
         _ => {}
     }
@@ -398,14 +403,74 @@ fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol) ->
     );
     forward_and_intervene(
         &upstream_url,
-        &req.body,
+        &body,
         &req.headers,
         ctx,
         &session_id,
         protocol,
+        out,
+    );
+}
+
+/// True when the JSON request body asks for an SSE reply (`"stream": true`).
+fn request_wants_stream(body: &[u8]) -> bool {
+    let Some(JsonValue::Object(o)) = std::str::from_utf8(body).ok().and_then(|s| parse(s).ok())
+    else {
+        return false;
+    };
+    matches!(
+        o.iter().find(|(k, _)| k == "stream"),
+        Some((_, JsonValue::Bool(true)))
     )
 }
 
+/// Message naming #60: warn/block cannot yet rewrite an SSE reply.
+pub(crate) fn stream_unsupported_message(mode: InterventionMode) -> String {
+    format!(
+        "ember-agent --mode {} cannot yet rewrite streaming (SSE) Anthropic replies \
+         (ember-research-lab/ember-agent-monitor#60); run with --mode observe",
+        mode.as_str()
+    )
+}
+
+fn stream_unsupported_response(mode: InterventionMode) -> HttpResponse {
+    let body = format!(
+        r#"{{"type":"error","error":{{"type":"ember_unsupported","message":{}}}}}"#,
+        crate::json::to_json_string(&JsonValue::Str(stream_unsupported_message(mode)))
+    )
+    .into_bytes();
+    HttpResponse {
+        status: 501,
+        status_text: "Not Implemented".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Content-Length".into(), body.len().to_string()),
+        ],
+        body,
+    }
+}
+
+fn bad_gateway(detail: &str) -> HttpResponse {
+    let body = format!(
+        r#"{{"error":"upstream","detail":{}}}"#,
+        crate::json::to_json_string(&JsonValue::Str(detail.into()))
+    )
+    .into_bytes();
+    HttpResponse {
+        status: 502,
+        status_text: "Bad Gateway".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Content-Length".into(), body.len().to_string()),
+        ],
+        body,
+    }
+}
+
+/// Forward to the upstream and relay its reply: status, status text and
+/// headers (minus hop-by-hop) are the upstream's own (#60). `text/event-stream`
+/// replies are passed through chunked as they arrive (observe mode only);
+/// everything else is buffered so the response-side analysis sees one body.
 fn forward_and_intervene(
     upstream_url: &str,
     body: &[u8],
@@ -413,55 +478,408 @@ fn forward_and_intervene(
     ctx: &ProxyContext,
     session_id: &str,
     protocol: Protocol,
-) -> HttpResponse {
-    let response_body = match forward_via_curl(upstream_url, body, headers) {
-        Ok(r) => r,
-        Err(e) => {
-            return HttpResponse {
-                status: 502,
-                status_text: "Bad Gateway".into(),
-                headers: vec![("Content-Type".into(), "application/json".into())],
-                body: format!(
-                    r#"{{"error":"upstream","detail":{}}}"#,
-                    crate::json::to_json_string(&JsonValue::Str(e))
-                )
-                .into_bytes(),
-            };
+    out: &mut TcpStream,
+) {
+    if let Err(e) = relay_upstream(upstream_url, body, headers, ctx, session_id, protocol, out) {
+        let _ = bad_gateway(&e).write_to(out);
+    }
+}
+
+const HEAD_CAP: usize = 64 * 1024;
+const BODY_CAP: usize = 64 * 1024 * 1024;
+
+/// `Err` means nothing has been sent to the client yet.
+fn relay_upstream(
+    url: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+    ctx: &ProxyContext,
+    session_id: &str,
+    protocol: Protocol,
+    out: &mut TcpStream,
+) -> Result<(), String> {
+    let mut cmd = Command::new(which_curl()?);
+    cmd.args(["-sS", "-i", "-N", "--connect-timeout", "10", "--max-time"])
+        .arg(UPSTREAM_TIMEOUT_SECS.to_string())
+        .args(["-X", "POST", "--data-binary", "@-"]);
+    for (k, v) in headers {
+        if !header_passthrough_blocked(k) {
+            cmd.arg("-H").arg(format!("{k}: {v}"));
+        }
+    }
+    cmd.arg(url)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("curl spawn: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("curl stdin")?;
+    let payload = body.to_vec();
+    thread::spawn(move || {
+        let _ = stdin.write_all(&payload);
+    });
+    let mut stdout = child.stdout.take().ok_or("curl stdout")?;
+    let mut stderr = child.stderr.take().ok_or("curl stderr")?;
+    let err_reader = thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stderr.read_to_string(&mut s);
+        s
+    });
+    let curl_failure = |child: &mut std::process::Child, err: thread::JoinHandle<String>| {
+        let status = child.wait().map_err(|e| format!("curl wait: {e}"))?;
+        let text = err.join().unwrap_or_default();
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("curl exit {:?}: {}", status.code(), text.trim()))
         }
     };
 
-    // Record response events and run dynamic detection.
-    // OpenAI response parsing is currently best-effort observe-only; the
-    // backward-strip path is Anthropic-tested and protocol-shaped. We
-    // log openai response events to the session graph but defer
-    // strip-and-substitute to a follow-up so the existing Anthropic
-    // intervention surface stays untouched in this refactor.
-    let response_findings = if protocol == Protocol::Anthropic {
-        record_and_analyze_response(&response_body, session_id, ctx)
-    } else {
-        Vec::new()
+    // Read until the response head (skipping interim 1xx blocks) is complete.
+    let mut raw: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    let head = loop {
+        let n = stdout.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            curl_failure(&mut child, err_reader)?;
+            return Err("upstream sent no response".into());
+        }
+        raw.extend_from_slice(&buf[..n]);
+        if let Some(h) = parse_response_head(&raw) {
+            break h;
+        }
+        if raw.len() > HEAD_CAP {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("upstream response head too large".into());
+        }
     };
-    let blocked: Vec<&Finding> = response_findings
-        .iter()
-        .filter(|f| matches!(f.severity, Severity::High | Severity::Critical))
-        .collect();
+    let rest = raw.split_off(head.end);
+    let encoded = head.content_encoding().is_some();
+    let enforcing = ctx.config.mode != InterventionMode::Observe;
 
-    // Backward-direction intervention: strip dangerous tool_use blocks.
-    // Anthropic-only at the moment; the OpenAI strip path lands when
-    // OpenAI response analysis lands (same follow-up as above).
-    let final_body = if protocol == Protocol::Anthropic
-        && matches!(
-            ctx.config.mode,
-            InterventionMode::Warn | InterventionMode::Block
-        )
-        && !blocked.is_empty()
-    {
-        strip_tool_use_in_response(&response_body, &blocked).unwrap_or(response_body.clone())
-    } else {
-        response_body
-    };
+    if head.is_event_stream() {
+        if enforcing {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(stream_unsupported_message(ctx.config.mode));
+        }
+        let mut observer =
+            (!encoded && protocol == Protocol::Anthropic).then(|| SseObserver::new(session_id));
+        let mut resp_head = head.client_head();
+        resp_head.push_str("Transfer-Encoding: chunked\r\n\r\n");
+        if out.write_all(resp_head.as_bytes()).is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(());
+        }
+        let mut client_gone = false;
+        let mut relay = |chunk: &[u8]| -> bool {
+            if chunk.is_empty() {
+                return true;
+            }
+            if let Some(o) = observer.as_mut() {
+                o.feed(chunk, ctx);
+            }
+            out.write_all(format!("{:x}\r\n", chunk.len()).as_bytes())
+                .and_then(|_| out.write_all(chunk))
+                .and_then(|_| out.write_all(b"\r\n"))
+                .and_then(|_| out.flush())
+                .is_ok()
+        };
+        client_gone |= !relay(&rest);
+        while !client_gone {
+            match stdout.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => client_gone |= !relay(&buf[..n]),
+            }
+        }
+        if client_gone {
+            let _ = child.kill(); // closing upstream stops generation
+        }
+        match curl_failure(&mut child, err_reader) {
+            // Terminator only on a clean end: a truncated stream must look
+            // truncated to the client, not complete.
+            Ok(()) if !client_gone => {
+                let _ = out.write_all(b"0\r\n\r\n").and_then(|_| out.flush());
+            }
+            Err(e) if !client_gone => eprintln!("ember-agent: upstream stream aborted: {e}"),
+            _ => {}
+        }
+        return Ok(());
+    }
 
-    HttpResponse::ok_json(final_body)
+    // Buffered path: one body, analysed whole.
+    let mut resp_body = rest;
+    loop {
+        match stdout.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                resp_body.extend_from_slice(&buf[..n]);
+                if resp_body.len() > BODY_CAP {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("upstream response body too large".into());
+                }
+            }
+        }
+    }
+    curl_failure(&mut child, err_reader)?;
+
+    let is_ok = (200..300).contains(&head.status);
+    if protocol == Protocol::Anthropic && is_ok {
+        if encoded {
+            // Cannot inspect bytes we cannot read. Warn/block must not pass
+            // them unchecked; observe passes them through untouched.
+            if enforcing {
+                return Err(format!(
+                    "upstream sent Content-Encoding: {} that cannot be inspected \
+                     (ember-research-lab/ember-agent-monitor#60)",
+                    head.content_encoding().unwrap_or_default()
+                ));
+            }
+            eprintln!("ember-agent: encoded reply passed uninspected (#60)");
+        } else {
+            // Record response events and run dynamic detection. OpenAI
+            // response parsing is deferred; strip is Anthropic-tested.
+            let findings = record_and_analyze_response(&resp_body, session_id, ctx);
+            let blocked: Vec<&Finding> = findings
+                .iter()
+                .filter(|f| matches!(f.severity, Severity::High | Severity::Critical))
+                .collect();
+            // Backward-direction intervention: strip dangerous tool_use blocks.
+            if enforcing && !blocked.is_empty() {
+                if let Some(stripped) = strip_tool_use_in_response(&resp_body, &blocked) {
+                    resp_body = stripped;
+                }
+            }
+        }
+    }
+
+    let mut resp_head = head.client_head();
+    resp_head.push_str(&format!("Content-Length: {}\r\n\r\n", resp_body.len()));
+    let _ = out
+        .write_all(resp_head.as_bytes())
+        .and_then(|_| out.write_all(&resp_body))
+        .and_then(|_| out.flush());
+    Ok(())
+}
+
+/// Parsed upstream response head.
+struct UpstreamHead {
+    status: u16,
+    reason: String,
+    headers: Vec<(String, String)>,
+    /// Offset of the first body byte in the buffer it was parsed from.
+    end: usize,
+}
+
+impl UpstreamHead {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    fn is_event_stream(&self) -> bool {
+        self.header("content-type")
+            .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
+    }
+
+    /// Declared non-identity `Content-Encoding`, if any.
+    fn content_encoding(&self) -> Option<String> {
+        self.header("content-encoding")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty() && v != "identity")
+    }
+
+    /// Status line + upstream headers minus hop-by-hop, ending in
+    /// `Connection: close\r\n` (framing headers are the caller's).
+    fn client_head(&self) -> String {
+        let mut s = format!("HTTP/1.1 {} {}\r\n", self.status, self.reason);
+        for (k, v) in &self.headers {
+            if !hop_by_hop(k) {
+                s.push_str(&format!("{k}: {v}\r\n"));
+            }
+        }
+        s.push_str("Connection: close\r\n");
+        s
+    }
+}
+
+/// Headers describing the upstream hop, not the message (RFC 9110 7.6.1),
+/// plus `content-length`, which the proxy recomputes for the body it sends.
+fn hop_by_hop(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection"
+            | "transfer-encoding"
+            | "keep-alive"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+            | "upgrade"
+            | "content-length"
+    )
+}
+
+fn default_reason(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        413 => "Payload Too Large",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        529 => "Overloaded",
+        _ => "Upstream",
+    }
+}
+
+/// First non-1xx head block in `buf` (curl `-i` output), or None while incomplete.
+fn parse_response_head(buf: &[u8]) -> Option<UpstreamHead> {
+    let mut start = 0;
+    loop {
+        let rel = buf[start..].windows(4).position(|w| w == b"\r\n\r\n")?;
+        let end = start + rel + 4;
+        let text = String::from_utf8_lossy(&buf[start..start + rel]).to_string();
+        let mut lines = text.lines();
+        let mut parts = lines.next()?.splitn(3, ' ');
+        let _version = parts.next()?;
+        let status: u16 = parts.next()?.trim().parse().ok()?;
+        if (100..200).contains(&status) {
+            start = end;
+            continue;
+        }
+        let reason = match parts.next().map(str::trim) {
+            Some(r) if !r.is_empty() => r.to_string(),
+            _ => default_reason(status).to_string(), // HTTP/2 has no reason phrase
+        };
+        let headers = lines
+            .filter_map(|l| l.split_once(':'))
+            .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+            .collect();
+        return Some(UpstreamHead {
+            status,
+            reason,
+            headers,
+            end,
+        });
+    }
+}
+
+const SSE_LINE_CAP: usize = 8 * 1024 * 1024;
+const SSE_TEXT_CAP: usize = 1024 * 1024;
+
+/// Observe-mode SSE inspection: reassembles Anthropic `content_block_*`
+/// events into the same blocks the buffered path analyses, as the bytes pass.
+/// Findings only; the bytes reaching the client are never altered.
+struct SseObserver {
+    session_id: String,
+    pending: Vec<u8>,
+    /// block index → (type, id, name, accumulated text, accumulated input json)
+    blocks: HashMap<i64, (String, String, String, String, String)>,
+}
+
+impl SseObserver {
+    fn new(session_id: &str) -> Self {
+        Self {
+            session_id: session_id.into(),
+            pending: Vec::new(),
+            blocks: HashMap::new(),
+        }
+    }
+
+    fn feed(&mut self, chunk: &[u8], ctx: &ProxyContext) {
+        self.pending.extend_from_slice(chunk);
+        while let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=nl).collect();
+            let line = String::from_utf8_lossy(&line);
+            if let Some(data) = line.trim_end().strip_prefix("data:") {
+                if let Ok(JsonValue::Object(ev)) = parse(data.trim()) {
+                    self.event(&ev, ctx);
+                }
+            }
+        }
+        if self.pending.len() > SSE_LINE_CAP {
+            eprintln!("ember-agent: SSE line over cap, inspection dropped for it");
+            self.pending.clear();
+        }
+    }
+
+    fn event(&mut self, ev: &[(String, JsonValue)], ctx: &ProxyContext) {
+        let Some(JsonValue::Number(idx)) = field_of(ev, "index") else {
+            return;
+        };
+        let idx = *idx as i64;
+        let obj = |v: Option<&JsonValue>| match v {
+            Some(JsonValue::Object(o)) => Some(o.clone()),
+            _ => None,
+        };
+        match string_field(ev, "type").as_deref() {
+            Some("content_block_start") => {
+                let Some(b) = obj(field_of(ev, "content_block")) else {
+                    return;
+                };
+                self.blocks.insert(
+                    idx,
+                    (
+                        string_field(&b, "type").unwrap_or_default(),
+                        string_field(&b, "id").unwrap_or_default(),
+                        string_field(&b, "name").unwrap_or_default(),
+                        string_field(&b, "text").unwrap_or_default(),
+                        String::new(),
+                    ),
+                );
+            }
+            Some("content_block_delta") => {
+                let (Some(d), Some(slot)) = (obj(field_of(ev, "delta")), self.blocks.get_mut(&idx))
+                else {
+                    return;
+                };
+                if let Some(t) = string_field(&d, "text") {
+                    if slot.3.len() < SSE_TEXT_CAP {
+                        slot.3.push_str(&t);
+                    }
+                }
+                if let Some(j) = string_field(&d, "partial_json") {
+                    if slot.4.len() < SSE_TEXT_CAP {
+                        slot.4.push_str(&j);
+                    }
+                }
+            }
+            Some("content_block_stop") => {
+                let Some((kind, id, name, text, json)) = self.blocks.remove(&idx) else {
+                    return;
+                };
+                let mut block: Vec<(String, JsonValue)> =
+                    vec![("type".into(), JsonValue::Str(kind.clone()))];
+                match kind.as_str() {
+                    "text" => block.push(("text".into(), JsonValue::Str(text))),
+                    "tool_use" => {
+                        let input = if json.trim().is_empty() {
+                            JsonValue::Object(Vec::new())
+                        } else {
+                            parse(&json).unwrap_or(JsonValue::Null)
+                        };
+                        block.push(("id".into(), JsonValue::Str(id)));
+                        block.push(("name".into(), JsonValue::Str(name)));
+                        block.push(("input".into(), input));
+                    }
+                    _ => return,
+                }
+                // Findings are logged by `analyze`; observe never rewrites.
+                analyze_block(&block, &self.session_id, ctx);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn field_of<'a>(o: &'a [(String, JsonValue)], key: &str) -> Option<&'a JsonValue> {
+    o.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
 
 fn format_refusal(findings: &[Finding]) -> String {
@@ -578,61 +996,63 @@ fn record_and_analyze_response(body: &[u8], session_id: &str, ctx: &ProxyContext
     if let Some(JsonValue::Array(arr)) = content {
         for block in arr {
             if let JsonValue::Object(b) = block {
-                let bt = b
-                    .iter()
-                    .find(|(k, _)| k == "type")
-                    .and_then(|(_, v)| match v {
-                        JsonValue::Str(s) => Some(s.as_str()),
-                        _ => None,
-                    });
-                let event = match bt {
-                    Some("text") => {
-                        let text = b
-                            .iter()
-                            .find(|(k, _)| k == "text")
-                            .and_then(|(_, v)| match v {
-                                JsonValue::Str(s) => Some(s.clone()),
-                                _ => None,
-                            })
-                            .unwrap_or_default();
-                        let mut body_map = HashMap::new();
-                        body_map.insert("text".into(), JsonValue::Str(text));
-                        Some(Event::new(
-                            session_id,
-                            EventKind::ModelText,
-                            TrustZone::WorkspaceLocal,
-                            body_map,
-                        ))
-                    }
-                    Some("tool_use") => {
-                        let id = string_field(b, "id").unwrap_or_default();
-                        let name = string_field(b, "name").unwrap_or_default();
-                        let input = b
-                            .iter()
-                            .find(|(k, _)| k == "input")
-                            .map(|(_, v)| v.clone())
-                            .unwrap_or(JsonValue::Null);
-                        let mut body_map = HashMap::new();
-                        body_map.insert("tool_use_id".into(), JsonValue::Str(id));
-                        body_map.insert("tool_name".into(), JsonValue::Str(name));
-                        body_map.insert("input".into(), input);
-                        Some(Event::new(
-                            session_id,
-                            EventKind::ToolCall,
-                            TrustZone::WorkspaceLocal,
-                            body_map,
-                        ))
-                    }
-                    _ => None,
-                };
-                if let Some(ev) = event {
-                    ctx.record(&ev);
-                    findings.extend(ctx.analyze(&ev));
-                }
+                findings.extend(analyze_block(b, session_id, ctx));
             }
         }
     }
     findings
+}
+
+/// Record + analyze one response content block (`text` / `tool_use`); shared
+/// by the buffered path and the SSE observer.
+fn analyze_block(b: &[(String, JsonValue)], session_id: &str, ctx: &ProxyContext) -> Vec<Finding> {
+    let bt = b
+        .iter()
+        .find(|(k, _)| k == "type")
+        .and_then(|(_, v)| match v {
+            JsonValue::Str(s) => Some(s.as_str()),
+            _ => None,
+        });
+    let event = match bt {
+        Some("text") => {
+            let text = string_field(b, "text").unwrap_or_default();
+            let mut body_map = HashMap::new();
+            body_map.insert("text".into(), JsonValue::Str(text));
+            Some(Event::new(
+                session_id,
+                EventKind::ModelText,
+                TrustZone::WorkspaceLocal,
+                body_map,
+            ))
+        }
+        Some("tool_use") => {
+            let id = string_field(b, "id").unwrap_or_default();
+            let name = string_field(b, "name").unwrap_or_default();
+            let input = b
+                .iter()
+                .find(|(k, _)| k == "input")
+                .map(|(_, v)| v.clone())
+                .unwrap_or(JsonValue::Null);
+            let mut body_map = HashMap::new();
+            body_map.insert("tool_use_id".into(), JsonValue::Str(id));
+            body_map.insert("tool_name".into(), JsonValue::Str(name));
+            body_map.insert("input".into(), input);
+            Some(Event::new(
+                session_id,
+                EventKind::ToolCall,
+                TrustZone::WorkspaceLocal,
+                body_map,
+            ))
+        }
+        _ => None,
+    };
+    match event {
+        Some(ev) => {
+            ctx.record(&ev);
+            ctx.analyze(&ev)
+        }
+        None => Vec::new(),
+    }
 }
 
 fn string_field(obj: &[(String, JsonValue)], key: &str) -> Option<String> {
@@ -744,48 +1164,6 @@ fn derive_session_id_for(req: &HttpRequest, body: &[u8], protocol: Protocol) -> 
     format!("anon-{}-{}", protocol.id(), std::process::id())
 }
 
-fn forward_via_curl(
-    url: &str,
-    body: &[u8],
-    headers: &[(String, String)],
-) -> Result<Vec<u8>, String> {
-    let curl = which_curl()?;
-    let mut cmd = Command::new(curl);
-    cmd.arg("-sS")
-        .arg("-X")
-        .arg("POST")
-        .arg("--connect-timeout")
-        .arg("10")
-        .arg("--max-time")
-        .arg(UPSTREAM_TIMEOUT_SECS.to_string())
-        .arg("--data-binary")
-        .arg("@-");
-    for (k, v) in headers {
-        if header_passthrough_blocked(k) {
-            continue;
-        }
-        cmd.arg("-H").arg(format!("{k}: {v}"));
-    }
-    cmd.arg(url);
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("curl spawn: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(body)
-            .map_err(|e| format!("curl stdin: {e}"))?;
-    }
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("curl wait: {e}"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("curl exit {:?}: {}", out.status.code(), err));
-    }
-    Ok(out.stdout)
-}
-
 pub(crate) fn which_curl() -> Result<String, String> {
     for candidate in [
         "/usr/bin/curl",
@@ -803,6 +1181,12 @@ pub(crate) fn header_passthrough_blocked(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     matches!(
         n.as_str(),
-        "host" | "content-length" | "connection" | "transfer-encoding" | "expect"
+        "host"
+            | "content-length"
+            | "connection"
+            | "transfer-encoding"
+            | "expect"
+            // Inspection needs plaintext: never ask upstream to compress (#60).
+            | "accept-encoding"
     )
 }

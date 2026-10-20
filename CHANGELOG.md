@@ -9,6 +9,12 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Fixed
+- **Anthropic forwarder flattened every reply (#60).** It returned curl's stdout wrapped in a synthetic `200 application/json`, so a 401 became
+  200, gzip bytes (from the forwarded `accept-encoding`) were labelled JSON (`API Error: JSON Parse error`), and `stream: true` SSE was
+  buffered into one fake body. Now upstream status, status text and headers (minus hop-by-hop) reach the client; `accept-encoding` is
+  stripped upstream; SSE streams through chunked in observe mode with events inspected in flight. **Breaking for `--mode warn|block`:**
+  the daemon refuses to start (library `serve`: 501 on `stream:true`), naming #60, until a stream-aware strip exists; the README systemd
+  example now uses `--mode observe`. Tests: `tests/anthropic_forwarding.rs`.
 - **Proxy 404'd Claude Code's `POST /v1/messages?beta=true` (#58).** Routes now match on the URI path only (`proto::path_only`); the
   original query string is forwarded upstream unchanged (Anthropic `upstream_path` previously hard-coded `/v1/messages`). Same for
   OpenAI routes and `/health`. Tests: proto unit tests and `tests/claude_code_request_shape.rs` (mock upstream, exact header shape).
