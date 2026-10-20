@@ -9,6 +9,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 ## [Unreleased]
 
 ### Fixed
+- **Detector no longer panics on real tool output (#47).** The clickfix `open-terminal-and-run` window sliced a byte range that could
+  end inside a multibyte character, and `find_command_chain` indexed one past the end on a trailing `|`. Both found by replaying
+  real transcripts; regression tests added.
 - **`argument_injection_pattern` no longer fires HIGH on benign shell commands (#26).** The rule is tool-class
   aware: shell tools (`Bash`, names containing `shell`/`exec`) get their own pattern list (pipe-to-shell,
   base64-decode-then-exec, eval of fetched content, Claude config paths, `rm -rf` on non-temp paths,
