@@ -20,6 +20,14 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   Mock upstream now speaks OpenAI Responses and Chat Completions SSE.
 
 ### Fixed
+- **Main-thread streaming requests hung behind analysis (#68).** Claude Code replays the whole conversation per request; the proxy
+  re-ingested all of it into the session graph and ran O(n^3) spectral analysis (twice per 5 events, under the global `graphs` lock)
+  *before* spawning curl, so a long session's request waited minutes and every other request queued on the lock (live daemon: six
+  handler threads at 5-10 CPU-minutes each). Now: observe mode ingests only events not yet seen for the session and runs ingest off
+  the forward path; spectral analysis runs on a snapshot outside the lock and is skipped above `SPECTRAL_MAX_NODES` (256) with a
+  one-time log line; a streaming request with no upstream response head after 60 s (`EMBER_AGENT_FIRST_BYTE_SECS`) is failed with a
+  502 naming the watchdog and a `HIGH watchdog` log line. Dedupe applies in all modes (key: full SHA-256 of kind + body; a history that does not extend the previous one resets the session's counts; an event is marked seen only after record and analyze succeed; in warn/block an event with a High finding stays unseen so a retry re-trips it); warn/block still analyse inline. Skipping spectral emits a `spectral_skipped` Medium finding, not just a log line. Observe ingest threads are bounded by `MAX_CONCURRENT`. **Needs a service restart
+  (do not restart while a driver session is attached).** Tests: `tests/streaming_hang_68.rs`.
 - **Anthropic forwarder flattened every reply (#60).** It returned curl's stdout wrapped in a synthetic `200 application/json`, so a 401 became
   200, gzip bytes (from the forwarded `accept-encoding`) were labelled JSON (`API Error: JSON Parse error`), and `stream: true` SSE was
   buffered into one fake body. Now upstream status, status text and headers (minus hop-by-hop) reach the client; `accept-encoding` is

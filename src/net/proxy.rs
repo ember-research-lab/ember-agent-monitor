@@ -30,7 +30,7 @@ use crate::store::Store;
 use crate::types::{
     DaemonConfig, EventKind, FidelityStatus, InterventionMode, Severity, TrustZone,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
@@ -41,6 +41,34 @@ use std::time::Duration;
 
 const MAX_CONCURRENT: usize = 16;
 const UPSTREAM_TIMEOUT_SECS: u32 = 600; // long-running streaming sessions
+
+/// Per-session replay-dedupe state (#68).
+#[derive(Default)]
+struct SeenState {
+    /// full event digest -> occurrences already ingested successfully.
+    counts: HashMap<[u8; 32], usize>,
+    /// digests of the previous request's history, in order.
+    last: Vec<[u8; 32]>,
+}
+
+/// Largest session graph the O(n^3) spectral pass runs on (#68). Claude Code
+/// replays the whole conversation on every request, so an uncapped graph
+/// grows past what Jacobi can finish in minutes. Above the cap the spectral
+/// rules are skipped and the skip is logged once per session.
+pub const SPECTRAL_MAX_NODES: usize = 256;
+
+/// Watchdog (#68): a streaming request whose upstream has sent no response
+/// head within this many seconds is failed with a 502 and a log line instead
+/// of being held. Override with `EMBER_AGENT_FIRST_BYTE_SECS`.
+const FIRST_BYTE_SECS_DEFAULT: u64 = 60;
+
+fn first_byte_secs() -> u64 {
+    std::env::var("EMBER_AGENT_FIRST_BYTE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(FIRST_BYTE_SECS_DEFAULT)
+}
 
 /// Proxy context shared across worker threads.
 pub struct ProxyContext {
@@ -56,6 +84,18 @@ pub struct ProxyContext {
     /// `<data_dir>/events.sock` — tool_call stream for ember-network (spec §6).
     /// `None` only if the bind failed, which is reported on stderr at startup.
     pub events_sock: Option<Arc<crate::net::socket::EventSocket>>,
+    /// session_id → (event kind + content hash → occurrences already ingested).
+    /// Requests replay the full history; observe mode ingests only what is new (#68).
+    seen: Mutex<HashMap<String, SeenState>>,
+    /// Serialises ingest so concurrent requests of one session cannot both
+    /// treat the same replayed event as unseen.
+    ingest_serial: Mutex<()>,
+    /// Observe-mode ingest threads in flight (bounded by `MAX_CONCURRENT`).
+    ingest_inflight: std::sync::atomic::AtomicUsize,
+    /// Test hook: fail the next N event-log appends.
+    fail_record: std::sync::atomic::AtomicUsize,
+    /// Sessions whose spectral skip was already logged (#68).
+    spectral_skip_logged: Mutex<HashSet<String>>,
 }
 
 impl ProxyContext {
@@ -98,6 +138,11 @@ impl ProxyContext {
             finding_writers: Mutex::new(HashMap::new()),
             graphs: Mutex::new(HashMap::new()),
             events_sock,
+            seen: Mutex::new(HashMap::new()),
+            ingest_serial: Mutex::new(()),
+            ingest_inflight: std::sync::atomic::AtomicUsize::new(0),
+            fail_record: std::sync::atomic::AtomicUsize::new(0),
+            spectral_skip_logged: Mutex::new(HashSet::new()),
         })
     }
 
@@ -107,18 +152,58 @@ impl ProxyContext {
 
     /// `record`, naming the ingest path for the events.sock `source` field.
     pub fn record_from(&self, event: &Event, source: crate::net::socket::Source) {
+        if let Err(e) = self.try_record_from(event, source) {
+            eprintln!("ember-agent: event not recorded: {e}");
+        }
+    }
+
+    /// Test hook (#68): make the next `n` event-log appends fail.
+    #[doc(hidden)]
+    pub fn inject_record_failures(&self, n: usize) {
+        self.fail_record.store(n, Ordering::SeqCst);
+    }
+
+    fn try_record(&self, event: &Event) -> Result<(), String> {
+        self.try_record_from(event, crate::net::socket::Source::Proxy)
+    }
+
+    fn try_record_from(
+        &self,
+        event: &Event,
+        source: crate::net::socket::Source,
+    ) -> Result<(), String> {
+        let injected = loop {
+            let n = self.fail_record.load(Ordering::SeqCst);
+            if n == 0 {
+                break false;
+            }
+            if self
+                .fail_record
+                .compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break true;
+            }
+        };
+        if injected {
+            return Err("injected record failure".into());
+        }
         let mut writers = self.writers.lock().unwrap();
-        let writer = writers.entry(event.session_id.clone()).or_insert_with(|| {
+        if !writers.contains_key(&event.session_id) {
             let path = self.store.session_log_path(&event.session_id);
-            EventLogWriter::open(&path).expect("open event log")
-        });
-        let _ = writer.append(event);
+            let w = EventLogWriter::open(&path).map_err(|e| format!("open event log: {e:?}"))?;
+            writers.insert(event.session_id.clone(), w);
+        }
+        let writer = writers.get_mut(&event.session_id).expect("just inserted");
+        let appended = writer.append(event);
         drop(writers);
+        appended.map_err(|e| format!("append event log: {e:?}"))?;
         if event.kind == crate::types::EventKind::ToolCall {
             if let Some(sock) = &self.events_sock {
                 sock.broadcast(event, source);
             }
         }
+        Ok(())
     }
 
     /// Public alias for the internal finding recorder. Used by handlers
@@ -192,6 +277,38 @@ impl ProxyContext {
         let _ = summary.save(&dest);
     }
 
+    /// Start of a request's history (#68). A history that does not extend the
+    /// previous one (compaction or edit rewrote it) resets the session's
+    /// dedupe counts, so an event that was dropped and later recurs is
+    /// analysed again.
+    fn begin_history(&self, session_id: &str, keys: &[[u8; 32]]) {
+        let mut seen = self.seen.lock().unwrap();
+        let st = seen.entry(session_id.to_string()).or_default();
+        if !keys.starts_with(&st.last) {
+            st.counts.clear();
+        }
+        st.last = keys.to_vec();
+    }
+
+    fn already_ingested(&self, session_id: &str, key: &[u8; 32], ordinal: usize) -> bool {
+        let seen = self.seen.lock().unwrap();
+        seen.get(session_id)
+            .and_then(|st| st.counts.get(key))
+            .is_some_and(|n| *n >= ordinal)
+    }
+
+    /// Only called after record and analyze both succeeded.
+    fn mark_ingested(&self, session_id: &str, key: [u8; 32], ordinal: usize) {
+        let mut seen = self.seen.lock().unwrap();
+        let e = seen
+            .entry(session_id.to_string())
+            .or_default()
+            .counts
+            .entry(key)
+            .or_insert(0);
+        *e = (*e).max(ordinal);
+    }
+
     /// Run static + dynamic detection for a freshly recorded event. Returns
     /// any findings emitted (callers may use these to drive intervention).
     pub fn analyze(&self, event: &Event) -> Vec<Finding> {
@@ -207,11 +324,49 @@ impl ProxyContext {
         // run it on every event. Triggered when event count is a multiple
         // of `spectral_cadence` AND we have at least 3 events.
         let n = graph.dynamic_graph.events.len();
-        if self.detection.spectral_cadence > 0 && n >= 3 && n % self.detection.spectral_cadence == 0
-        {
-            findings.extend(crate::detect::run_spectral(graph, &self.detection));
-        }
+        let spectral_due = self.detection.spectral_cadence > 0
+            && n >= 3
+            && n % self.detection.spectral_cadence == 0;
+        // Eigendecomposition runs on a snapshot, outside the graphs lock: the
+        // lock is shared by every session and by the SSE relay (#68).
+        let snapshot = if spectral_due && n <= SPECTRAL_MAX_NODES {
+            Some(graph.clone())
+        } else {
+            None
+        };
         drop(graphs);
+        if spectral_due && snapshot.is_none() {
+            let first = self
+                .spectral_skip_logged
+                .lock()
+                .unwrap()
+                .insert(event.session_id.clone());
+            if first {
+                self.record_finding(&Finding {
+                    finding_type: "spectral_skipped".into(),
+                    scope: crate::detect::FindingScope::Static,
+                    severity: Severity::Medium,
+                    session_id: event.session_id.clone(),
+                    event_id: Some(event.event_id.clone()),
+                    tool: None,
+                    argument: None,
+                    matched_value: None,
+                    pattern: None,
+                    trust_zone: None,
+                    rationale: format!(
+                        "spectral: skipped (n={n} > {SPECTRAL_MAX_NODES}); spectral_anomaly and spectral_motif_match do not run for this session (#68)"
+                    ),
+                    score: Severity::Medium.weight(),
+                });
+                eprintln!(
+                    "ember-agent: spectral analysis skipped for session {} — {n} events exceed SPECTRAL_MAX_NODES={SPECTRAL_MAX_NODES} (#68)",
+                    event.session_id
+                );
+            }
+        }
+        if let Some(g) = snapshot {
+            findings.extend(crate::detect::run_spectral(&g, &self.detection));
+        }
         for f in &findings {
             self.record_finding(f);
         }
@@ -311,7 +466,7 @@ pub(crate) fn ingest_request(
     req: &HttpRequest,
     ctx: &ProxyContext,
     protocol: Protocol,
-) -> (String, Vec<Finding>) {
+) -> Result<(String, Vec<Finding>), String> {
     // Detect protocol/body mismatch as a finding before parsing — even if
     // the body parses cleanly, a mismatch is signal worth recording.
     let mismatch_reason = protocol.body_disagrees(&req.body);
@@ -343,21 +498,92 @@ pub(crate) fn ingest_request(
     // Parse + record + analyze every event from the inbound request.
     let mut high_findings: Vec<Finding> = Vec::new();
     if let Ok(events) = protocol.parse_request(&req.body, &session_id) {
-        for ev in events {
-            ctx.record(&ev);
-            for f in ctx.analyze(&ev) {
+        let _serial = ctx.ingest_serial.lock().unwrap();
+        let enforcing = ctx.config.mode != InterventionMode::Observe;
+        let keys: Vec<[u8; 32]> = events.iter().map(Event::full_digest).collect();
+        ctx.begin_history(&session_id, &keys);
+        let mut ordinals: HashMap<[u8; 32], usize> = HashMap::new();
+        for (ev, key) in events.into_iter().zip(keys) {
+            let ord = ordinals.entry(key).or_insert(0);
+            *ord += 1;
+            let ord = *ord;
+            if ctx.already_ingested(&session_id, &key, ord) {
+                continue;
+            }
+            if let Err(e) = ctx.try_record(&ev) {
+                // Not marked ingested: the next request replays it and retries.
+                eprintln!(
+                    "ember-agent: ingest of {} failed, will retry on replay: {e}",
+                    ev.event_id
+                );
+                if enforcing {
+                    // Fail closed: a request that could not be recorded and
+                    // analysed is not forwarded in warn/block.
+                    return Err(format!("could not record request event: {e}"));
+                }
+                continue;
+            }
+            let findings = ctx.analyze(&ev);
+            let mut blocking = false;
+            for f in findings {
                 if matches!(f.severity, Severity::High | Severity::Critical) {
+                    blocking = true;
                     high_findings.push(f);
                 }
+            }
+            // Warn/block: an event that raised a High finding stays "unseen" so a
+            // retry of the same history keeps tripping it.
+            if !(enforcing && blocking) {
+                ctx.mark_ingested(&session_id, key, ord);
             }
         }
     }
 
-    (session_id, high_findings)
+    Ok((session_id, high_findings))
 }
 
-fn handle_messages(req: &HttpRequest, ctx: &ProxyContext, protocol: Protocol, out: &mut TcpStream) {
-    let (session_id, high_findings) = ingest_request(req, ctx, protocol);
+fn handle_messages(
+    req: &HttpRequest,
+    ctx: &Arc<ProxyContext>,
+    protocol: Protocol,
+    out: &mut TcpStream,
+) {
+    // Observe mode forwards whatever the analysis finds, so analysis must not
+    // sit in front of the forward: it ran inline until #68 and held a 170 K
+    // token main-thread request for minutes before curl was even spawned.
+    // Warn/block need the findings first and keep the inline path.
+    let (session_id, high_findings) = if ctx.config.mode == InterventionMode::Observe {
+        // Bounded by MAX_CONCURRENT. Saturated: skip analysis for this request,
+        // loudly; nothing is marked ingested, so the next replay picks it up.
+        if ctx.ingest_inflight.fetch_add(1, Ordering::SeqCst) >= MAX_CONCURRENT {
+            ctx.ingest_inflight.fetch_sub(1, Ordering::SeqCst);
+            eprintln!("ember-agent: ingest saturated ({MAX_CONCURRENT} in flight), analysis deferred to next request (#68)");
+        } else {
+            let (ctx2, req2) = (Arc::clone(ctx), req.clone());
+            thread::spawn(move || {
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = ingest_request(&req2, &ctx2, protocol);
+                }));
+                if r.is_err() {
+                    eprintln!("ember-agent: HIGH ingest thread panicked, events stay unseen and retry on replay (#68)");
+                }
+                ctx2.ingest_inflight.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+        (derive_session_id_for(req, &req.body, protocol), Vec::new())
+    } else {
+        match ingest_request(req, ctx, protocol) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "ember-agent: HIGH refusing request, analysis failed in {:?} mode: {e}",
+                    ctx.config.mode
+                );
+                let _ = bad_gateway(&format!("ember-agent refused: {e}")).write_to(out);
+                return;
+            }
+        }
+    };
 
     // Warn/block must be able to rewrite the reply; a stream cannot be
     // rewritten yet (#60), so refuse loudly instead of forwarding unchecked.
@@ -488,6 +714,15 @@ fn forward_and_intervene(
 const HEAD_CAP: usize = 64 * 1024;
 const BODY_CAP: usize = 64 * 1024 * 1024;
 
+/// Sets the flag when dropped, so the watchdog thread never outlives its request.
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
 /// `Err` means nothing has been sent to the client yet.
 fn relay_upstream(
     url: &str,
@@ -511,23 +746,63 @@ fn relay_upstream(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("curl spawn: {e}"))?;
-    let mut stdin = child.stdin.take().ok_or("curl stdin")?;
+    let child = cmd.spawn().map_err(|e| format!("curl spawn: {e}"))?;
+    let child = Arc::new(Mutex::new(child));
+    // Watchdog (#68): a stream with no response head after N s is failed
+    // loudly (502 + log line) instead of being held open.
+    let head_seen = Arc::new(AtomicBool::new(false));
+    let watchdog_fired = Arc::new(AtomicBool::new(false));
+    let _stop_watchdog = StopOnDrop(Arc::clone(&head_seen));
+    if request_wants_stream(body) {
+        let secs = first_byte_secs();
+        let (child2, seen2, fired2) = (
+            Arc::clone(&child),
+            Arc::clone(&head_seen),
+            Arc::clone(&watchdog_fired),
+        );
+        let session = session_id.to_string();
+        thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+            while std::time::Instant::now() < deadline {
+                if seen2.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            if !seen2.swap(true, Ordering::Relaxed) {
+                fired2.store(true, Ordering::Relaxed);
+                eprintln!(
+                    "ember-agent: HIGH watchdog — no upstream response for session {session} after {secs}s, failing the request with 502 (#68)"
+                );
+                let _ = child2.lock().unwrap().kill();
+            }
+        });
+    }
+    let mut stdin = child.lock().unwrap().stdin.take().ok_or("curl stdin")?;
     let payload = body.to_vec();
     thread::spawn(move || {
         let _ = stdin.write_all(&payload);
     });
-    let mut stdout = child.stdout.take().ok_or("curl stdout")?;
-    let mut stderr = child.stderr.take().ok_or("curl stderr")?;
+    let mut stdout = child.lock().unwrap().stdout.take().ok_or("curl stdout")?;
+    let mut stderr = child.lock().unwrap().stderr.take().ok_or("curl stderr")?;
     let err_reader = thread::spawn(move || {
         let mut s = String::new();
         let _ = stderr.read_to_string(&mut s);
         s
     });
-    let curl_failure = |child: &mut std::process::Child, err: thread::JoinHandle<String>| {
-        let status = child.wait().map_err(|e| format!("curl wait: {e}"))?;
+    let curl_failure = |child: &Mutex<std::process::Child>, err: thread::JoinHandle<String>| {
+        let status = child
+            .lock()
+            .unwrap()
+            .wait()
+            .map_err(|e| format!("curl wait: {e}"))?;
         let text = err.join().unwrap_or_default();
-        if status.success() {
+        if watchdog_fired.load(Ordering::Relaxed) {
+            Err(format!(
+                "watchdog: no upstream response within {}s (ember-agent-monitor#68)",
+                first_byte_secs()
+            ))
+        } else if status.success() {
             Ok(())
         } else {
             Err(format!("curl exit {:?}: {}", status.code(), text.trim()))
@@ -540,7 +815,7 @@ fn relay_upstream(
     let head = loop {
         let n = stdout.read(&mut buf).unwrap_or(0);
         if n == 0 {
-            curl_failure(&mut child, err_reader)?;
+            curl_failure(&child, err_reader)?;
             return Err("upstream sent no response".into());
         }
         raw.extend_from_slice(&buf[..n]);
@@ -548,19 +823,20 @@ fn relay_upstream(
             break h;
         }
         if raw.len() > HEAD_CAP {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.lock().unwrap().kill();
+            let _ = child.lock().unwrap().wait();
             return Err("upstream response head too large".into());
         }
     };
+    head_seen.store(true, Ordering::Relaxed);
     let rest = raw.split_off(head.end);
     let encoded = head.content_encoding().is_some();
     let enforcing = ctx.config.mode != InterventionMode::Observe;
 
     if head.is_event_stream() {
         if enforcing {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.lock().unwrap().kill();
+            let _ = child.lock().unwrap().wait();
             return Err(stream_unsupported_message(ctx.config.mode));
         }
         let mut observer =
@@ -568,8 +844,8 @@ fn relay_upstream(
         let mut resp_head = head.client_head();
         resp_head.push_str("Transfer-Encoding: chunked\r\n\r\n");
         if out.write_all(resp_head.as_bytes()).is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = child.lock().unwrap().kill();
+            let _ = child.lock().unwrap().wait();
             return Ok(());
         }
         let mut client_gone = false;
@@ -594,9 +870,9 @@ fn relay_upstream(
             }
         }
         if client_gone {
-            let _ = child.kill(); // closing upstream stops generation
+            let _ = child.lock().unwrap().kill(); // closing upstream stops generation
         }
-        match curl_failure(&mut child, err_reader) {
+        match curl_failure(&child, err_reader) {
             // Terminator only on a clean end: a truncated stream must look
             // truncated to the client, not complete.
             Ok(()) if !client_gone => {
@@ -616,14 +892,14 @@ fn relay_upstream(
             Ok(n) => {
                 resp_body.extend_from_slice(&buf[..n]);
                 if resp_body.len() > BODY_CAP {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    let _ = child.lock().unwrap().kill();
+                    let _ = child.lock().unwrap().wait();
                     return Err("upstream response body too large".into());
                 }
             }
         }
     }
-    curl_failure(&mut child, err_reader)?;
+    curl_failure(&child, err_reader)?;
 
     let is_ok = (200..300).contains(&head.status);
     if protocol == Protocol::Anthropic && is_ok {

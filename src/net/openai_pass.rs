@@ -125,7 +125,14 @@ fn bad_gateway(detail: &str) -> HttpResponse {
 }
 
 fn post(req: &HttpRequest, ctx: &ProxyContext, out: &mut TcpStream) {
-    let (sid, high) = ingest_request(req, ctx, Protocol::OpenAI);
+    let (sid, high) = match ingest_request(req, ctx, Protocol::OpenAI) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("ember-agent: HIGH refusing OpenAI request, analysis failed: {e}");
+            let _ = bad_gateway(&format!("ember-agent refused: {e}")).write_to(out);
+            return;
+        }
+    };
     let echo = |mut r: HttpResponse| {
         r.headers.push((ECHO_HEADER.into(), sid.clone()));
         r
