@@ -90,6 +90,29 @@ journalctl --user -u ember-agent-monitor -f
 `--upstream-openai` points `/openai/*` at the local llama-server (ember-local); drop it if
 you do not use that lane.
 
+### Local-model Anthropic route (#74)
+
+Headless `claude -p` workers on a local model (ember-local "Route B") speak the Anthropic Messages
+wire format to a llama-server's `/v1/messages`. To keep them in the monitor like every other session,
+give the daemon the llama-server URL:
+
+```
+ember-agent daemon --mode observe --port 9452 \
+  --upstream-openai http://127.0.0.1:11436 \
+  --upstream-local-anthropic http://127.0.0.1:11436
+```
+
+The worker sets `ANTHROPIC_BASE_URL=http://127.0.0.1:9452/local` (Claude Code appends `/v1/messages?beta=true`).
+
+- **Selection is the exact path `/local/v1/messages`** (query kept, `/local` stripped upstream). Nothing else
+  reaches the local upstream, and `/v1/messages` still goes only to `--upstream-anthropic`
+  (default `https://api.anthropic.com`). `/local/v1/messages/x`, `/local/v1/../v1/messages` etc. are 404.
+- **Fail-closed.** Without `--upstream-local-anthropic` the route answers `503 ember_local_route_unconfigured`; with an
+  unreachable upstream it answers `502`. Neither ever falls back to Anthropic, so a "local" job cannot bill the cloud.
+- Recording, SSE passthrough and detection are the Anthropic lane's, session ids are `anon-anthropic-local-*` when no
+  `x-claude-session-id` is sent. Warn/block are refused for streams exactly as for the cloud lane (#60); the daemon
+  currently starts in `observe` only.
+
 ## Claude Code compatibility gate and install (#64)
 
 Claude Code is the primary client, so it is tested as a real binary, not as a belief about its requests.

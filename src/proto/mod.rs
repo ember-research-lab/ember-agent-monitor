@@ -60,6 +60,10 @@ use crate::event::Event;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Protocol {
     Anthropic,
+    /// Anthropic Messages wire format, forwarded to a local model server
+    /// (`--upstream-local-anthropic`) instead of api.anthropic.com (#74).
+    /// Selected only by the explicit `/local/v1/messages` path.
+    AnthropicLocal,
     OpenAI,
 }
 
@@ -69,10 +73,17 @@ pub fn path_only(target: &str) -> &str {
 }
 
 impl Protocol {
+    /// True for both Anthropic-wire protocols (cloud and local upstream):
+    /// same parsing, session recording, SSE observation and warn/block rules.
+    pub fn is_anthropic(&self) -> bool {
+        matches!(self, Protocol::Anthropic | Protocol::AnthropicLocal)
+    }
+
     /// Stable string id for telemetry and config keys.
     pub fn id(&self) -> &'static str {
         match self {
             Protocol::Anthropic => "anthropic",
+            Protocol::AnthropicLocal => "anthropic-local",
             Protocol::OpenAI => "openai",
         }
     }
@@ -95,6 +106,11 @@ impl Protocol {
         if path == "/v1/messages" {
             return Some(Protocol::Anthropic);
         }
+        // Local-model Anthropic route (#74): exact path, so the client's
+        // base URL is `http://127.0.0.1:9452/local`. Never a prefix match.
+        if path == "/local/v1/messages" {
+            return Some(Protocol::AnthropicLocal);
+        }
         if path == "/openai/v1/chat/completions" || path == "/openai/v1/responses" {
             return Some(Protocol::OpenAI);
         }
@@ -112,7 +128,7 @@ impl Protocol {
     /// The query string of the original request is forwarded unchanged.
     pub fn upstream_path(&self, request_path: &str) -> String {
         match self {
-            Protocol::Anthropic => {
+            Protocol::Anthropic | Protocol::AnthropicLocal => {
                 format!(
                     "/v1/messages{}",
                     &request_path[path_only(request_path).len()..]
@@ -133,7 +149,7 @@ impl Protocol {
     /// suitable for inclusion in a finding rationale.
     pub fn parse_request(&self, body: &[u8], session_id: &str) -> Result<Vec<Event>, String> {
         match self {
-            Protocol::Anthropic => anthropic::parse_request(body)
+            Protocol::Anthropic | Protocol::AnthropicLocal => anthropic::parse_request(body)
                 .map(|req| anthropic::request_to_events(&req, session_id)),
             Protocol::OpenAI => {
                 openai::parse_request(body).map(|req| openai::request_to_events(&req, session_id))
@@ -182,7 +198,9 @@ impl Protocol {
                         || s.starts_with("grok-"))
         });
         match self {
-            Protocol::Anthropic if has_openai_marker && !has_anthropic_marker => {
+            Protocol::Anthropic | Protocol::AnthropicLocal
+                if has_openai_marker && !has_anthropic_marker =>
+            {
                 Some("OpenAI-shaped body sent to Anthropic path")
             }
             Protocol::OpenAI if has_anthropic_marker && !has_openai_marker => {
@@ -319,5 +337,25 @@ mod tests {
             Protocol::Anthropic.upstream_path("/v1/messages"),
             "/v1/messages"
         );
+    }
+
+    #[test]
+    fn local_route_is_exact_and_keeps_query() {
+        assert_eq!(
+            Protocol::for_path("/local/v1/messages?beta=true"),
+            Some(Protocol::AnthropicLocal)
+        );
+        assert_eq!(
+            Protocol::AnthropicLocal.upstream_path("/local/v1/messages?beta=true"),
+            "/v1/messages?beta=true"
+        );
+        for p in [
+            "/local/v1/../v1/messages",
+            "/local/v1/messages/x",
+            "/local/",
+            "/locals/v1/messages",
+        ] {
+            assert_eq!(Protocol::for_path(p), None, "{p}");
+        }
     }
 }

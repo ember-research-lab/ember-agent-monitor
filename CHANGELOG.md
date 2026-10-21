@@ -8,6 +8,12 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added (#74)
+- **Local-model Anthropic route.** `--upstream-local-anthropic URL` maps the exact path `/local/v1/messages` (query kept) to a local
+  Anthropic-compatible server (llama-server), so `claude -p` Route B jobs with `ANTHROPIC_BASE_URL=http://127.0.0.1:9452/local`
+  are recorded like any session. Fail-closed: unconfigured is `503`, unreachable is `502`, never a fallback to api.anthropic.com.
+  Tests: `tests/local_anthropic_route.rs`.
+
 ### Added (class guard, #64)
 - **Real-client compatibility gate.** `tests/claude_code_e2e.rs` runs the installed `claude -p` through the proxy against a mock
   upstream (API key and bearer auth, `fable`/`opus`, `stream-json`, upstream 400); CI installs a pinned Claude Code and fails if it is
