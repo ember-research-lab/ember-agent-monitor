@@ -283,7 +283,7 @@ fn local_sse_streams_through_incrementally() {
 /// Event-type multiset of a session log, ids and timestamps ignored.
 fn event_kinds(dir: &std::path::Path, session: &str) -> Vec<String> {
     let path = dir.join(format!("sessions/{session}.jsonl"));
-    let mut kinds: Vec<String> = std::fs::read_to_string(&path)
+    let mut kinds: Vec<String> = std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
         .filter_map(|l| {
