@@ -296,6 +296,11 @@ pub struct DaemonConfig {
     /// Upstream base URL for Anthropic-protocol traffic
     /// (e.g. `https://api.anthropic.com`). Path is appended per request.
     pub upstream_anthropic: String,
+    /// Optional upstream base URL for the local-model Anthropic route
+    /// (`/local/v1/messages`, e.g. `http://127.0.0.1:11436` for a
+    /// llama-server). `None` = route unconfigured: requests to it are refused
+    /// with an explicit error, never forwarded to `upstream_anthropic` (#74).
+    pub upstream_local_anthropic: Option<String>,
     /// Upstream base URL for OpenAI-compatible traffic
     /// (e.g. `https://api.openai.com`, `https://api.x.ai`,
     /// `https://generativelanguage.googleapis.com/v1beta/openai`,
@@ -313,11 +318,17 @@ impl DaemonConfig {
     /// Resolve a `Protocol` to its configured upstream base URL.
     /// Centralised here so adding a new protocol means adding one
     /// match arm + one config field, not hunting for `format!` calls.
-    pub fn upstream_for(&self, protocol: crate::proto::Protocol) -> &str {
-        match protocol {
+    ///
+    /// `None` only for `AnthropicLocal` with no `--upstream-local-anthropic`:
+    /// callers must refuse, not fall back to another upstream.
+    pub fn upstream_for(&self, protocol: crate::proto::Protocol) -> Option<&str> {
+        Some(match protocol {
             crate::proto::Protocol::Anthropic => &self.upstream_anthropic,
+            crate::proto::Protocol::AnthropicLocal => {
+                return self.upstream_local_anthropic.as_deref()
+            }
             crate::proto::Protocol::OpenAI => &self.upstream_openai,
-        }
+        })
     }
 }
 
@@ -332,6 +343,7 @@ impl Default for DaemonConfig {
             data_dir,
             watch_dir,
             upstream_anthropic: "https://api.anthropic.com".into(),
+            upstream_local_anthropic: None,
             upstream_openai: "https://api.openai.com".into(),
             integrity_manifest: None,
         }
