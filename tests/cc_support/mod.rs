@@ -113,11 +113,18 @@ fn handle_upstream_conn(mut stream: TcpStream, seen: Arc<Mutex<Vec<Seen>>>, stat
         let l = h.to_ascii_lowercase();
         l.starts_with("accept-encoding:") && l.contains("gzip")
     });
+    let responses_route = request_line.contains("/responses");
+    let openai_route = responses_route || request_line.contains("/chat/completions");
     seen.lock().unwrap().push(Seen {
         request_line,
         headers,
         body,
     });
+    if openai_route {
+        // OpenAI-compatible routes (Codex today; OpenCode/Pi on their OpenAI providers).
+        write_openai_reply(&mut stream, responses_route, status);
+        return;
+    }
     if status != 200 {
         let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"mock rejection"},"request_id":"req_mock"}"#;
         let head = format!(
@@ -195,6 +202,57 @@ fn handle_upstream_conn(mut stream: TcpStream, seen: Arc<Mutex<Vec<Seen>>>, stat
     let _ = stream.flush();
 }
 
+/// Answer an OpenAI-compatible request the way the real API does: a Responses
+/// API SSE stream for `/responses`, Chat Completions chunks for
+/// `/chat/completions`; the assistant text is always `ok`. `status != 200`
+/// gives an OpenAI-style error body.
+fn write_openai_reply(stream: &mut TcpStream, responses: bool, status: u16) {
+    if status != 200 {
+        let body = r#"{"error":{"message":"mock rejection","type":"invalid_request_error","param":null,"code":null}}"#;
+        let head = format!(
+            "HTTP/1.1 {status} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(head.as_bytes());
+        let _ = stream.flush();
+        return;
+    }
+    let events: Vec<(&str, String)> = if responses {
+        let item = r#"{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok","annotations":[]}]}"#;
+        let resp = r#"{"id":"resp_1","object":"response","created_at":1,"status":"in_progress","model":"gpt-5","output":[]}"#;
+        vec![
+            ("response.created", format!(r#"{{"type":"response.created","response":{resp}}}"#)),
+            ("response.output_item.added", r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","role":"assistant","status":"in_progress","content":[]}}"#.to_string()),
+            ("response.content_part.added", r#"{"type":"response.content_part.added","item_id":"msg_1","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}"#.to_string()),
+            ("response.output_text.delta", r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"ok"}"#.to_string()),
+            ("response.output_text.done", r#"{"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":"ok"}"#.to_string()),
+            ("response.output_item.done", format!(r#"{{"type":"response.output_item.done","output_index":0,"item":{item}}}"#)),
+            ("response.completed", format!(r#"{{"type":"response.completed","response":{{"id":"resp_1","object":"response","created_at":1,"status":"completed","model":"gpt-5","output":[{item}],"usage":{{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}}}}"#)),
+        ]
+    } else {
+        vec![
+            ("", r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}"#.to_string()),
+            ("", r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#.to_string()),
+            ("", "[DONE]".to_string()),
+        ]
+    };
+    let _ = stream.write_all(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+    );
+    for (name, data) in events {
+        let chunk = if name.is_empty() {
+            format!("data: {data}\n\n")
+        } else {
+            format!("event: {name}\ndata: {data}\n\n")
+        };
+        let _ = stream.write_all(format!("{:x}\r\n{chunk}\r\n", chunk.len()).as_bytes());
+        let _ = stream.flush();
+        thread::sleep(Duration::from_millis(5));
+    }
+    let _ = stream.write_all(b"0\r\n\r\n");
+    let _ = stream.flush();
+}
+
 /// Minimal valid gzip (single stored deflate block; body must be < 64 KiB).
 fn gzip_stored(data: &[u8]) -> Vec<u8> {
     assert!(data.len() < 65535);
@@ -249,6 +307,7 @@ pub fn start_proxy(tag: &str, mode: InterventionMode, upstream_url: &str) -> Pro
         mode,
         data_dir,
         upstream_anthropic: upstream_url.to_string(),
+        upstream_openai: upstream_url.to_string(),
         ..DaemonConfig::default()
     };
     let ctx = Arc::new(ProxyContext::new(cfg).expect("ctx"));
@@ -449,7 +508,13 @@ pub fn run_claude(tag: &str, base_url: &str, auth: Auth, model: &str, extra: &[&
         Auth::ApiKey => cmd.env("ANTHROPIC_API_KEY", "sk-ant-api03-dummy-for-cc-gate"),
         Auth::Bearer => cmd.env("ANTHROPIC_AUTH_TOKEN", "dummy-bearer-for-cc-gate"),
     };
-    let mut child = cmd.spawn().expect("spawn claude");
+    run_command(cmd, &scratch)
+}
+
+/// Spawn `cmd` (stdout/stderr piped), kill it after 120 s (`code == Some(-9)`),
+/// and remove `scratch` afterwards.
+fn run_command(mut cmd: Command, scratch: &Path) -> ClaudeRun {
+    let mut child = cmd.spawn().expect("spawn client");
     let (mut so, mut se) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
     let t_out = thread::spawn(move || {
         let mut s = String::new();
@@ -478,8 +543,103 @@ pub fn run_claude(tag: &str, base_url: &str, auth: Auth, model: &str, extra: &[&
         stderr: t_err.join().unwrap(),
         code,
     };
-    let _ = std::fs::remove_dir_all(&scratch);
+    let _ = std::fs::remove_dir_all(scratch);
     run
+}
+
+/// A non-Claude harness under test (#64 scope add): Codex CLI, OpenCode, Pi.
+pub struct Harness {
+    pub name: &'static str,
+    /// Executable on PATH.
+    pub bin: &'static str,
+    /// Version pinned in CI (`ci.yml`); a different local version only warns.
+    pub pinned: &'static str,
+}
+
+/// Gate for tests that need a real harness binary; same contract as
+/// [`require_claude`]: absent means loud skip locally and a panic under `CI`.
+pub fn require_harness(h: &Harness, test: &str) -> Option<String> {
+    let out = Command::new(h.bin).arg("--version").output().ok();
+    match out.filter(|o| o.status.success()) {
+        Some(o) => {
+            // Pi prints its version on stderr, the others on stdout.
+            let text = format!(
+                "{} {}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            let v = text
+                .split_whitespace()
+                .rev()
+                .find(|t| t.chars().next().is_some_and(|c| c.is_ascii_digit()))
+                .unwrap_or("")
+                .to_string();
+            eprintln!("[cc-gate] {test}: {} --version = {v}", h.bin);
+            if v != h.pinned {
+                if in_ci() {
+                    panic!(
+                        "[cc-gate] {test}: {} {v} installed, CI pins {}",
+                        h.bin, h.pinned
+                    );
+                }
+                eprintln!(
+                    "[cc-gate] WARNING: {} {v} differs from the pinned {}; results may not match CI",
+                    h.bin, h.pinned
+                );
+            }
+            Some(v)
+        }
+        None => {
+            let msg = format!(
+                "[cc-gate] {test}: `{}` binary NOT FOUND on PATH. The {} compatibility gate (#64) did NOT run. \
+                 Install the pinned version ({}) and re-run.",
+                h.bin, h.name, h.pinned
+            );
+            if in_ci() {
+                panic!("{msg} CI is set: refusing to skip.");
+            }
+            eprintln!("{msg} SKIPPING (local run; CI would fail here).");
+            None
+        }
+    }
+}
+
+/// Run `h.bin args` in a scratch `HOME` with a scrubbed environment (PATH only,
+/// plus `env`). `files` are written under the scratch HOME first (relative
+/// paths); `{HOME}` in `args`, `env` values and file contents expands to it.
+/// The working directory is `<HOME>/cwd`.
+pub fn run_harness(
+    h: &Harness,
+    tag: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+    files: &[(&str, &str)],
+) -> ClaudeRun {
+    let scratch =
+        std::env::temp_dir().join(format!("eam-cc-{}-{tag}-{}", h.name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    let cwd = scratch.join("cwd");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let home = scratch.to_string_lossy().to_string();
+    let x = |t: &str| t.replace("{HOME}", &home);
+    for (rel, content) in files {
+        let path = scratch.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, x(content)).unwrap();
+    }
+    let mut cmd = Command::new(h.bin);
+    cmd.env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("HOME", &scratch)
+        .current_dir(&cwd)
+        .args(args.iter().map(|a| x(a)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, x(v));
+    }
+    run_command(cmd, &scratch)
 }
 
 impl ClaudeRun {

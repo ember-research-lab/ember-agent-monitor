@@ -9,7 +9,7 @@ install:
 gate:
     cargo fmt --all -- --check
     cargo clippy --all-targets --no-deps -- -D warnings
-    CI=true cargo test --test claude_code_e2e --test claude_code_request_shape --test anthropic_forwarding
+    CI=true cargo test --test claude_code_e2e --test harness_e2e --test claude_code_request_shape --test anthropic_forwarding
 
 # Refresh tests/fixtures/claude-code/<installed version>/ from the real client.
 capture-claude-code:

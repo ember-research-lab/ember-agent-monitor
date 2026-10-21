@@ -15,6 +15,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 - **Wire-capture fixture** `tests/fixtures/claude-code/2.1.305/` replayed by the request-shape and forwarding tests instead of a
   hand-written shape; `just capture-claude-code` refreshes it, a newer installed client warns.
 - **`just install` / `scripts/install.sh`**: build, restart, real-client acceptance for `fable` and `opus`, rollback to `<bin>.prev` on failure.
+- **Codex CLI, OpenCode and Pi gate** (`tests/harness_e2e.rs`): the installed binaries (pinned in CI: 0.163.0, 1.19.3, 0.73.1) run through the proxy
+  against a mock upstream (Codex: Responses API via `/openai/v1`; OpenCode and Pi: Anthropic provider via `/v1/messages`), each with an upstream-400 test.
+  Mock upstream now speaks OpenAI Responses and Chat Completions SSE.
 
 ### Fixed
 - **Anthropic forwarder flattened every reply (#60).** It returned curl's stdout wrapped in a synthetic `200 application/json`, so a 401 became

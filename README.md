@@ -103,6 +103,10 @@ Claude Code is the primary client, so it is tested as a real binary, not as a be
 - **Wire capture** (`tests/fixtures/claude-code/<version>/`): the real request (headers + body, secrets redacted) replayed by
   `claude_code_request_shape.rs` and `anthropic_forwarding.rs`. A newer installed `claude` than the newest fixture prints a warning;
   `just capture-claude-code` refreshes it.
+- **Other harnesses** (`tests/harness_e2e.rs`): the same contract for Codex CLI (`codex exec`, Responses API via `/openai/v1`), OpenCode
+  (`opencode run`, Anthropic provider) and Pi (`pi -p`, Anthropic provider): scrubbed env, scratch `HOME`, mock upstream, `ok` reply, wire
+  line/auth/stream asserted, upstream 400 must fail. CI pins Codex 0.163.0, OpenCode 1.19.3, Pi 0.73.1; a different version fails under
+  `CI=true` and warns locally. No wire-capture fixtures for these yet (Claude Code only).
 - **`just gate`**: fmt + clippy + the compat tests with `CI=true`. Mandatory before merging any proxy change.
 - **`just install`** (`scripts/install.sh`) is the only sanctioned way to put a build live: it keeps the running binary as
   `<bin>.prev`, builds, restarts the unit, and requires `claude -p` to answer `ok` for `fable` and `opus` through the live port; on any
