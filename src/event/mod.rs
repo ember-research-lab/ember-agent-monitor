@@ -27,6 +27,16 @@ pub struct Event {
 }
 
 impl Event {
+    /// Full 256-bit identity of this event's content: kind plus the canonical
+    /// body. Unlike `content_hash` (64-bit prefix) this is collision-safe
+    /// enough to gate detection on (#68 replay dedupe).
+    pub fn full_digest(&self) -> [u8; 32] {
+        let mut buf = String::from(self.kind.as_str());
+        buf.push('|');
+        buf.push_str(&canonical_body(&self.body));
+        sha256::sha256(buf.as_bytes())
+    }
+
     pub fn new(
         session_id: impl Into<String>,
         kind: EventKind,
@@ -327,7 +337,7 @@ fn generate_id(
     hex_prefix(&digest, 16)
 }
 
-fn hash_body(body: &HashMap<String, JsonValue>) -> String {
+fn canonical_body(body: &HashMap<String, JsonValue>) -> String {
     let mut pairs: Vec<(&String, &JsonValue)> = body.iter().collect();
     pairs.sort_by(|a, b| a.0.cmp(b.0));
     let canonical = JsonValue::Object(
@@ -336,8 +346,11 @@ fn hash_body(body: &HashMap<String, JsonValue>) -> String {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
     );
-    let s = to_json_string(&canonical);
-    let digest = sha256::sha256(s.as_bytes());
+    to_json_string(&canonical)
+}
+
+fn hash_body(body: &HashMap<String, JsonValue>) -> String {
+    let digest = sha256::sha256(canonical_body(body).as_bytes());
     hex_prefix(&digest, 16)
 }
 
