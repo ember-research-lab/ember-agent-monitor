@@ -54,7 +54,10 @@ const FILES: &[(&str, &str, usize)] = &[
 ];
 
 fn hex(d: &[u8]) -> String {
-    d.iter().map(|b| format!("{b:02x}")).collect()
+    d.iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn corpus_dir() -> PathBuf {

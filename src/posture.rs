@@ -339,7 +339,12 @@ pub fn hash_workspace(cwd: &str) -> String {
         }
     }
     let digest = sha256::sha256(out.display().to_string().as_bytes());
-    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+    digest
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn tool_input_strings(event: &Event) -> Vec<String> {

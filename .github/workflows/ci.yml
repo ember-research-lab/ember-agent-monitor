@@ -31,6 +31,29 @@ jobs:
           components: clippy, rustfmt
       - name: Verify curl present
         run: curl --version
+      # Real-client compatibility gate (#64): the e2e tests run the installed
+      # `claude` against the proxy. The version is pinned; a missing binary makes
+      # those tests FAIL under CI=true (never skip).
+      - name: Install Claude Code (pinned)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: "22"
+      - name: Install pinned Claude Code
+        shell: bash
+        env:
+          CLAUDE_CODE_VERSION: "2.1.305"
+        run: |
+          npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+          claude --version
+          test "$(claude --version | awk '{print $1}')" = "${CLAUDE_CODE_VERSION}"
+      # Other harnesses (#64 scope add): pinned; harness_e2e fails under CI=true on any mismatch.
+      - name: Install pinned Codex CLI, OpenCode, Pi
+        shell: bash
+        run: |
+          npm install -g @openai/codex@0.163.0 opencode-ai@1.19.3 @mariozechner/pi-coding-agent@0.73.1
+          codex --version
+          opencode --version
+          pi --version 2>&1
       - name: Check zero dependencies
         shell: bash
         run: |

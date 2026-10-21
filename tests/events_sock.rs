@@ -104,7 +104,7 @@ fn watcher_fed_transcript_tool_call_is_broadcast_with_contract_shape() {
     assert_eq!(bget("tool_use_id"), Some(JsonValue::Str("toolu_1".into())));
     assert_eq!(bget("tool_name"), Some(JsonValue::Str("Bash".into())));
     assert!(matches!(bget("input"), Some(JsonValue::Object(_))));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(dir.as_path());
 }
 
 #[test]
@@ -138,5 +138,5 @@ fn same_tool_use_id_from_proxy_and_watcher_is_broadcast_once() {
         b.contains("toolu_2"),
         "duplicate must not be re-broadcast: {b}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(dir.as_path());
 }
