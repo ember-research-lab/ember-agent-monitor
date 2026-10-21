@@ -48,10 +48,11 @@ fn print_help() {
     eprintln!("SUBCOMMANDS:");
     eprintln!("  init                 Initialize ~/.ember/agent-monitor");
     eprintln!("  daemon [--mode M] [--port P] [--data-dir D] [--integrity-manifest F]");
-    eprintln!("         [--upstream-anthropic URL] [--upstream-openai URL]");
+    eprintln!("         [--upstream-anthropic URL] [--upstream-local-anthropic URL]");
+    eprintln!("         [--upstream-openai URL]");
     eprintln!("                       Run proxy + file-watcher (M = observe|warn|block).");
     eprintln!(
-        "                       Routes /v1/messages → Anthropic, /openai/v1/* → OpenAI-compat."
+        "                       Routes /v1/messages → Anthropic, /local/v1/messages → local Anthropic-compat\n                       upstream (refused if unset), /openai/v1/* → OpenAI-compat."
     );
     eprintln!("                       --integrity-manifest enables hash-pinned file checks.");
     eprintln!("  status               Show daemon health and fidelity status");
@@ -110,6 +111,17 @@ fn cmd_daemon(args: Vec<String>) -> Result<u8, String> {
             "--upstream-anthropic" => {
                 cfg.upstream_anthropic =
                     iter.next().ok_or("--upstream-anthropic requires a URL")?;
+            }
+            "--upstream-local-anthropic" => {
+                let url = iter
+                    .next()
+                    .ok_or("--upstream-local-anthropic requires a URL")?;
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(format!(
+                        "--upstream-local-anthropic must be an http(s) URL, got {url}"
+                    ));
+                }
+                cfg.upstream_local_anthropic = Some(url.trim_end_matches('/').to_string());
             }
             "--upstream-openai" => {
                 cfg.upstream_openai = iter.next().ok_or("--upstream-openai requires a URL")?;
