@@ -118,6 +118,14 @@ fn failed_not_fake_ok(run: &ClaudeRun, what: &str) {
         run.stdout,
         run.stderr
     );
+    // A synthetic 200 in front of the error (#60 class) can still exit non-zero;
+    // the upstream's own message must reach the user.
+    assert!(
+        format!("{}{}", run.stdout, run.stderr).contains(SENTINEL),
+        "{what}: upstream error text not surfaced\nstdout: {}\nstderr: {}",
+        run.stdout,
+        run.stderr
+    );
 }
 
 fn anthropic_wire(seen: &[Seen], model: &str) {

@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Planted in every mock error body; a 400 test must find it in the client's output.
+pub const SENTINEL: &str = "EMBER_UPSTREAM_400_SENTINEL";
+
 /// One request the mock upstream received.
 #[derive(Clone, Debug)]
 pub struct Seen {
@@ -126,7 +129,7 @@ fn handle_upstream_conn(mut stream: TcpStream, seen: Arc<Mutex<Vec<Seen>>>, stat
         return;
     }
     if status != 200 {
-        let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"mock rejection"},"request_id":"req_mock"}"#;
+        let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"mock rejection EMBER_UPSTREAM_400_SENTINEL"},"request_id":"req_mock"}"#;
         let head = format!(
             "HTTP/1.1 {status} Mock\r\nContent-Type: application/json\r\nrequest-id: req_mock\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
@@ -208,7 +211,7 @@ fn handle_upstream_conn(mut stream: TcpStream, seen: Arc<Mutex<Vec<Seen>>>, stat
 /// gives an OpenAI-style error body.
 fn write_openai_reply(stream: &mut TcpStream, responses: bool, status: u16) {
     if status != 200 {
-        let body = r#"{"error":{"message":"mock rejection","type":"invalid_request_error","param":null,"code":null}}"#;
+        let body = r#"{"error":{"message":"mock rejection EMBER_UPSTREAM_400_SENTINEL","type":"invalid_request_error","param":null,"code":null}}"#;
         let head = format!(
             "HTTP/1.1 {status} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()

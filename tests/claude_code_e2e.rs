@@ -160,6 +160,12 @@ fn claude_p_upstream_400_is_a_failure_not_a_fake_ok() {
     );
     assert_ne!(run.stdout.trim(), "ok", "400 turned into a fake ok");
     assert!(
+        format!("{}{}", run.stdout, run.stderr).contains(SENTINEL),
+        "upstream error text not surfaced\nstdout: {}\nstderr: {}",
+        run.stdout,
+        run.stderr
+    );
+    assert!(
         !up.seen.lock().unwrap().is_empty(),
         "request never reached upstream"
     );
