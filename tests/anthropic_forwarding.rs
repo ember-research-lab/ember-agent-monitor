@@ -5,6 +5,7 @@
 //! `retry-after` / `request-id`, a declared `Content-Encoding`, and chunked
 //! `text/event-stream`. No new HTTP dependency: raw sockets on both sides.
 
+mod cc_support;
 use ember_agent_monitor::net::proxy::{serve, ProxyContext};
 use ember_agent_monitor::types::{DaemonConfig, InterventionMode};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -96,14 +97,21 @@ const BODY: &str =
     r#"{"model":"claude-opus-5-5","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#;
 const STREAM_BODY: &str = r#"{"model":"claude-opus-5-5","max_tokens":1,"stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
 
-/// Send like Claude Code (incl. `accept-encoding`); return the connection.
+/// Send like Claude Code: the headers of the real wire capture
+/// (`tests/fixtures/claude-code/`, #64), incl. `accept-encoding`.
 fn send(port: u16, body: &str) -> TcpStream {
+    let cap = cc_support::load_capture();
     let mut c = TcpStream::connect(format!("127.0.0.1:{port}")).expect("client");
     c.set_read_timeout(Some(Duration::from_secs(10))).ok();
-    let req = format!(
-        "POST /v1/messages?beta=true HTTP/1.1\r\nHost: 127.0.0.1\r\nauthorization: Bearer x\r\nanthropic-version: 2023-06-01\r\naccept-encoding: gzip, deflate, br\r\ncontent-type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+    let mut req = format!("{}\r\n", cap.request_line);
+    for h in &cap.headers {
+        req.push_str(h);
+        req.push_str("\r\n");
+    }
+    req.push_str(&format!(
+        "host: 127.0.0.1\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
-    );
+    ));
     c.write_all(req.as_bytes()).unwrap();
     c
 }

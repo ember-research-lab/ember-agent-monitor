@@ -90,6 +90,29 @@ journalctl --user -u ember-agent-monitor -f
 `--upstream-openai` points `/openai/*` at the local llama-server (ember-local); drop it if
 you do not use that lane.
 
+## Claude Code compatibility gate and install (#64)
+
+Claude Code is the primary client, so it is tested as a real binary, not as a belief about its requests.
+
+- **Real-client e2e** (`tests/claude_code_e2e.rs`): runs the installed `claude -p` (scrubbed env, scratch `HOME`/`CLAUDE_CONFIG_DIR`,
+  dummy credentials) through the proxy to a mock Anthropic upstream; asserts `ok`, no `API Error`, `POST /v1/messages?beta=true` with
+  `anthropic-beta`/`anthropic-version`/auth intact, the SSE reply, and that an upstream 400 fails the run. Covers `ANTHROPIC_API_KEY`
+  (`x-api-key`), `ANTHROPIC_AUTH_TOKEN` (`authorization: Bearer`), `--model fable|opus` and `--output-format stream-json`. Findings:
+  `-p` always sends `stream:true`; no login is needed when the mock answers. CI installs a **pinned** Claude Code (`ci.yml`) and
+  prints `claude --version`; with `CI=true` a missing binary fails the tests. Locally an absent binary prints a loud SKIP.
+- **Wire capture** (`tests/fixtures/claude-code/<version>/`): the real request (headers + body, secrets redacted) replayed by
+  `claude_code_request_shape.rs` and `anthropic_forwarding.rs`. A newer installed `claude` than the newest fixture prints a warning;
+  `just capture-claude-code` refreshes it.
+- **Other harnesses** (`tests/harness_e2e.rs`): the same contract for Codex CLI (`codex exec`, Responses API via `/openai/v1`), OpenCode
+  (`opencode run`, Anthropic provider) and Pi (`pi -p`, Anthropic provider): scrubbed env, scratch `HOME`, mock upstream, `ok` reply, wire
+  line/auth/stream asserted, upstream 400 must fail. CI pins Codex 0.163.0, OpenCode 1.19.3, Pi 0.73.1; a different version fails under
+  `CI=true` and warns locally. No wire-capture fixtures for these yet (Claude Code only).
+- **`just gate`**: fmt + clippy + the compat tests with `CI=true`. Mandatory before merging any proxy change.
+- **`just install`** (`scripts/install.sh`) is the only sanctioned way to put a build live: it keeps the running binary as
+  `<bin>.prev`, builds, restarts the unit, and requires `claude -p` to answer `ok` for `fable` and `opus` through the live port; on any
+  failure it reinstalls `.prev`, restarts, and exits non-zero. Override `UNIT`/`PORT`/`BIN`/`BUILD_CMD` only to test the script against a
+  throwaway unit.
+
 ## Dogfood (Aaron's Claude Code sessions)
 
 User service `~/.config/systemd/user/ember-agent-monitor.service` runs the daemon in warn mode; the
