@@ -193,7 +193,7 @@ fn capture_claude_code_fixture() {
     let body = redact_body(&s.body);
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/claude-code")
-        .join(&version);
+        .join(version);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("request.head"), head).unwrap();
     std::fs::write(dir.join("request.body.json"), body).unwrap();
