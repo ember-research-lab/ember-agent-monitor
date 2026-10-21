@@ -76,7 +76,7 @@ fn mock_upstream(silent: bool) -> String {
 }
 
 fn start_proxy(tag: &str, upstream: String) -> (u16, Arc<AtomicBool>) {
-    let (port, stop, _, _) = start_proxy_ctx(tag, upstream);
+    let (port, stop, _, _) = start_proxy_mode(tag, upstream, InterventionMode::Observe);
     (port, stop)
 }
 
@@ -84,12 +84,20 @@ fn start_proxy_ctx(
     tag: &str,
     upstream: String,
 ) -> (u16, Arc<AtomicBool>, Arc<ProxyContext>, std::path::PathBuf) {
+    start_proxy_mode(tag, upstream, InterventionMode::Observe)
+}
+
+fn start_proxy_mode(
+    tag: &str,
+    upstream: String,
+    mode: InterventionMode,
+) -> (u16, Arc<AtomicBool>, Arc<ProxyContext>, std::path::PathBuf) {
     let port = free_port();
     let data_dir = std::env::temp_dir().join(format!("eam-68-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
     let cfg = DaemonConfig {
         proxy_port: port,
-        mode: InterventionMode::Observe,
+        mode,
         data_dir: data_dir.clone(),
         upstream_anthropic: upstream,
         ..DaemonConfig::default()
@@ -256,6 +264,48 @@ fn compaction_that_drops_an_event_lets_it_recur_and_be_analysed() {
     // X recurs once: must be analysed (stale count 3 would suppress it).
     assert_eq!(send_and_count(port, &dir, &history(&["Z", "X"])), 5);
     stop.store(true, Ordering::Relaxed);
+}
+
+/// Fail closed (verifier F1): in block mode a request whose events cannot be recorded must be
+/// refused with a 5xx and never reach the upstream.
+#[test]
+fn block_mode_refuses_when_the_session_log_is_unwritable() {
+    use std::os::unix::fs::PermissionsExt;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+    let h2 = Arc::clone(&hits);
+    thread::spawn(move || {
+        for _ in l.incoming() {
+            h2.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+    let (port, stop, _ctx, dir) = start_proxy_mode("ro", upstream, InterventionMode::Block);
+    let sessions = dir.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::File::create(sessions.join("probe")).is_ok() {
+        // Running as root: permissions do not bind, the scenario cannot be built.
+        std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipping: directory permissions not enforced for this user");
+        return;
+    }
+    let body = r#"{"model":"m","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"#;
+    let (resp, _) = post(port, body);
+    std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o755)).unwrap();
+    stop.store(true, Ordering::Relaxed);
+    assert!(
+        resp.starts_with("HTTP/1.1 502"),
+        "expected a 5xx refusal, got: {}",
+        &resp[..resp.len().min(200)]
+    );
+    assert!(resp.contains("refused"), "{resp}");
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        0,
+        "request was forwarded despite failing closed"
+    );
 }
 
 /// Live: streaming + extended thinking through the proxy with the real upstream. Needs the

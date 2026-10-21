@@ -466,7 +466,7 @@ pub(crate) fn ingest_request(
     req: &HttpRequest,
     ctx: &ProxyContext,
     protocol: Protocol,
-) -> (String, Vec<Finding>) {
+) -> Result<(String, Vec<Finding>), String> {
     // Detect protocol/body mismatch as a finding before parsing — even if
     // the body parses cleanly, a mismatch is signal worth recording.
     let mismatch_reason = protocol.body_disagrees(&req.body);
@@ -516,6 +516,11 @@ pub(crate) fn ingest_request(
                     "ember-agent: ingest of {} failed, will retry on replay: {e}",
                     ev.event_id
                 );
+                if enforcing {
+                    // Fail closed: a request that could not be recorded and
+                    // analysed is not forwarded in warn/block.
+                    return Err(format!("could not record request event: {e}"));
+                }
                 continue;
             }
             let findings = ctx.analyze(&ev);
@@ -534,7 +539,7 @@ pub(crate) fn ingest_request(
         }
     }
 
-    (session_id, high_findings)
+    Ok((session_id, high_findings))
 }
 
 fn handle_messages(
@@ -557,7 +562,7 @@ fn handle_messages(
             let (ctx2, req2) = (Arc::clone(ctx), req.clone());
             thread::spawn(move || {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    ingest_request(&req2, &ctx2, protocol);
+                    let _ = ingest_request(&req2, &ctx2, protocol);
                 }));
                 if r.is_err() {
                     eprintln!("ember-agent: HIGH ingest thread panicked, events stay unseen and retry on replay (#68)");
@@ -567,7 +572,17 @@ fn handle_messages(
         }
         (derive_session_id_for(req, &req.body, protocol), Vec::new())
     } else {
-        ingest_request(req, ctx, protocol)
+        match ingest_request(req, ctx, protocol) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "ember-agent: HIGH refusing request, analysis failed in {:?} mode: {e}",
+                    ctx.config.mode
+                );
+                let _ = bad_gateway(&format!("ember-agent refused: {e}")).write_to(out);
+                return;
+            }
+        }
     };
 
     // Warn/block must be able to rewrite the reply; a stream cannot be
