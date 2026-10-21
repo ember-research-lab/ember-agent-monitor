@@ -381,8 +381,14 @@ pub fn serve(ctx: Arc<ProxyContext>, stop: Arc<AtomicBool>) -> Result<(), String
         .set_nonblocking(false)
         .map_err(|e| format!("listener config: {e}"))?;
     eprintln!(
-        "ember-agent: proxy on http://{}, forwarding anthropic→{} openai→{}",
-        addr, ctx.config.upstream_anthropic, ctx.config.upstream_openai,
+        "ember-agent: proxy on http://{}, forwarding anthropic→{} local-anthropic→{} openai→{}",
+        addr,
+        ctx.config.upstream_anthropic,
+        ctx.config
+            .upstream_local_anthropic
+            .as_deref()
+            .unwrap_or("(unconfigured: /local/v1/messages refused)"),
+        ctx.config.upstream_openai,
     );
 
     let active: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
@@ -548,6 +554,17 @@ fn handle_messages(
     protocol: Protocol,
     out: &mut TcpStream,
 ) {
+    // Fail closed (#74): the local route with no configured upstream is an
+    // explicit error, never a forward to api.anthropic.com (that would bill
+    // the cloud for a "local" job). Nothing is recorded for a refused request.
+    let Some(base) = ctx.config.upstream_for(protocol) else {
+        eprintln!(
+            "ember-agent: HIGH refusing {} — local route not configured (start the daemon with --upstream-local-anthropic URL) (#74)",
+            req.path
+        );
+        let _ = local_route_unconfigured().write_to(out);
+        return;
+    };
     // Observe mode forwards whatever the analysis finds, so analysis must not
     // sit in front of the forward: it ran inline until #68 and held a 170 K
     // token main-thread request for minutes before curl was even spawned.
@@ -587,7 +604,7 @@ fn handle_messages(
 
     // Warn/block must be able to rewrite the reply; a stream cannot be
     // rewritten yet (#60), so refuse loudly instead of forwarding unchecked.
-    if protocol == Protocol::Anthropic
+    if protocol.is_anthropic()
         && ctx.config.mode != InterventionMode::Observe
         && request_wants_stream(&req.body)
     {
@@ -614,7 +631,7 @@ fn handle_messages(
             // forward-warn path needs more care to preserve message
             // ordering. Backward strip works for both protocols (the
             // committed-model invariant is the real safety mechanism).
-            if protocol == Protocol::Anthropic {
+            if protocol.is_anthropic() {
                 body = inject_system_warning(&req.body, &high_findings)
                     .unwrap_or_else(|| req.body.clone());
             }
@@ -622,11 +639,7 @@ fn handle_messages(
         _ => {}
     }
 
-    let upstream_url = format!(
-        "{}{}",
-        ctx.config.upstream_for(protocol),
-        protocol.upstream_path(&req.path)
-    );
+    let upstream_url = format!("{base}{}", protocol.upstream_path(&req.path));
     forward_and_intervene(
         &upstream_url,
         &body,
@@ -668,6 +681,19 @@ fn stream_unsupported_response(mode: InterventionMode) -> HttpResponse {
     HttpResponse {
         status: 501,
         status_text: "Not Implemented".into(),
+        headers: vec![
+            ("Content-Type".into(), "application/json".into()),
+            ("Content-Length".into(), body.len().to_string()),
+        ],
+        body,
+    }
+}
+
+fn local_route_unconfigured() -> HttpResponse {
+    let body = br#"{"type":"error","error":{"type":"ember_local_route_unconfigured","message":"ember-agent: /local/v1/messages has no upstream; start the daemon with --upstream-local-anthropic URL (ember-agent-monitor#74). Not falling back to api.anthropic.com."}}"#.to_vec();
+    HttpResponse {
+        status: 503,
+        status_text: "Service Unavailable".into(),
         headers: vec![
             ("Content-Type".into(), "application/json".into()),
             ("Content-Length".into(), body.len().to_string()),
@@ -840,7 +866,7 @@ fn relay_upstream(
             return Err(stream_unsupported_message(ctx.config.mode));
         }
         let mut observer =
-            (!encoded && protocol == Protocol::Anthropic).then(|| SseObserver::new(session_id));
+            (!encoded && protocol.is_anthropic()).then(|| SseObserver::new(session_id));
         let mut resp_head = head.client_head();
         resp_head.push_str("Transfer-Encoding: chunked\r\n\r\n");
         if out.write_all(resp_head.as_bytes()).is_err() {
@@ -902,7 +928,7 @@ fn relay_upstream(
     curl_failure(&child, err_reader)?;
 
     let is_ok = (200..300).contains(&head.status);
-    if protocol == Protocol::Anthropic && is_ok {
+    if protocol.is_anthropic() && is_ok {
         if encoded {
             // Cannot inspect bytes we cannot read. Warn/block must not pass
             // them unchecked; observe passes them through untouched.
@@ -1409,7 +1435,7 @@ fn derive_session_id_for(req: &HttpRequest, body: &[u8], protocol: Protocol) -> 
 
     // 2. Hash of the first user message text — same turn → same hash.
     let first_user_text = match protocol {
-        Protocol::Anthropic =>
+        Protocol::Anthropic | Protocol::AnthropicLocal =>
         {
             #[allow(deprecated)]
             anthropic::parse_request(body).ok().and_then(|p| {
