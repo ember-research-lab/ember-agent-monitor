@@ -42,6 +42,15 @@ use std::time::Duration;
 const MAX_CONCURRENT: usize = 16;
 const UPSTREAM_TIMEOUT_SECS: u32 = 600; // long-running streaming sessions
 
+/// Per-session replay-dedupe state (#68).
+#[derive(Default)]
+struct SeenState {
+    /// full event digest -> occurrences already ingested successfully.
+    counts: HashMap<[u8; 32], usize>,
+    /// digests of the previous request's history, in order.
+    last: Vec<[u8; 32]>,
+}
+
 /// Largest session graph the O(n^3) spectral pass runs on (#68). Claude Code
 /// replays the whole conversation on every request, so an uncapped graph
 /// grows past what Jacobi can finish in minutes. Above the cap the spectral
@@ -77,7 +86,14 @@ pub struct ProxyContext {
     pub events_sock: Option<Arc<crate::net::socket::EventSocket>>,
     /// session_id → (event kind + content hash → occurrences already ingested).
     /// Requests replay the full history; observe mode ingests only what is new (#68).
-    seen: Mutex<HashMap<String, HashMap<String, usize>>>,
+    seen: Mutex<HashMap<String, SeenState>>,
+    /// Serialises ingest so concurrent requests of one session cannot both
+    /// treat the same replayed event as unseen.
+    ingest_serial: Mutex<()>,
+    /// Observe-mode ingest threads in flight (bounded by `MAX_CONCURRENT`).
+    ingest_inflight: std::sync::atomic::AtomicUsize,
+    /// Test hook: fail the next N event-log appends.
+    fail_record: std::sync::atomic::AtomicUsize,
     /// Sessions whose spectral skip was already logged (#68).
     spectral_skip_logged: Mutex<HashSet<String>>,
 }
@@ -123,6 +139,9 @@ impl ProxyContext {
             graphs: Mutex::new(HashMap::new()),
             events_sock,
             seen: Mutex::new(HashMap::new()),
+            ingest_serial: Mutex::new(()),
+            ingest_inflight: std::sync::atomic::AtomicUsize::new(0),
+            fail_record: std::sync::atomic::AtomicUsize::new(0),
             spectral_skip_logged: Mutex::new(HashSet::new()),
         })
     }
@@ -133,18 +152,58 @@ impl ProxyContext {
 
     /// `record`, naming the ingest path for the events.sock `source` field.
     pub fn record_from(&self, event: &Event, source: crate::net::socket::Source) {
+        if let Err(e) = self.try_record_from(event, source) {
+            eprintln!("ember-agent: event not recorded: {e}");
+        }
+    }
+
+    /// Test hook (#68): make the next `n` event-log appends fail.
+    #[doc(hidden)]
+    pub fn inject_record_failures(&self, n: usize) {
+        self.fail_record.store(n, Ordering::SeqCst);
+    }
+
+    fn try_record(&self, event: &Event) -> Result<(), String> {
+        self.try_record_from(event, crate::net::socket::Source::Proxy)
+    }
+
+    fn try_record_from(
+        &self,
+        event: &Event,
+        source: crate::net::socket::Source,
+    ) -> Result<(), String> {
+        let injected = loop {
+            let n = self.fail_record.load(Ordering::SeqCst);
+            if n == 0 {
+                break false;
+            }
+            if self
+                .fail_record
+                .compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                break true;
+            }
+        };
+        if injected {
+            return Err("injected record failure".into());
+        }
         let mut writers = self.writers.lock().unwrap();
-        let writer = writers.entry(event.session_id.clone()).or_insert_with(|| {
+        if !writers.contains_key(&event.session_id) {
             let path = self.store.session_log_path(&event.session_id);
-            EventLogWriter::open(&path).expect("open event log")
-        });
-        let _ = writer.append(event);
+            let w = EventLogWriter::open(&path).map_err(|e| format!("open event log: {e:?}"))?;
+            writers.insert(event.session_id.clone(), w);
+        }
+        let writer = writers.get_mut(&event.session_id).expect("just inserted");
+        let appended = writer.append(event);
         drop(writers);
+        appended.map_err(|e| format!("append event log: {e:?}"))?;
         if event.kind == crate::types::EventKind::ToolCall {
             if let Some(sock) = &self.events_sock {
                 sock.broadcast(event, source);
             }
         }
+        Ok(())
     }
 
     /// Public alias for the internal finding recorder. Used by handlers
@@ -218,33 +277,36 @@ impl ProxyContext {
         let _ = summary.save(&dest);
     }
 
-    /// Observe mode: drop the events of a replayed history that were already
-    /// ingested for this session, so a request costs O(new events), not
-    /// O(conversation) (#68). Identity is event kind + body hash, counted, so
-    /// a genuinely repeated message still ingests when it occurs more often
-    /// than before. Warn/block keep full replay: a replayed event that
-    /// triggered a finding must keep triggering it on the retry.
-    fn new_events_only(&self, session_id: &str, events: Vec<Event>) -> Vec<Event> {
-        if self.config.mode != InterventionMode::Observe {
-            return events;
-        }
+    /// Start of a request's history (#68). A history that does not extend the
+    /// previous one (compaction or edit rewrote it) resets the session's
+    /// dedupe counts, so an event that was dropped and later recurs is
+    /// analysed again.
+    fn begin_history(&self, session_id: &str, keys: &[[u8; 32]]) {
         let mut seen = self.seen.lock().unwrap();
-        let known = seen.entry(session_id.to_string()).or_default();
-        let mut in_request: HashMap<String, usize> = HashMap::new();
-        let mut fresh = Vec::new();
-        for ev in events {
-            let key = format!("{:?}|{}", ev.kind, ev.content_hash);
-            let n = in_request.entry(key.clone()).or_insert(0);
-            *n += 1;
-            if *n > known.get(&key).copied().unwrap_or(0) {
-                fresh.push(ev);
-            }
+        let st = seen.entry(session_id.to_string()).or_default();
+        if !keys.starts_with(&st.last) {
+            st.counts.clear();
         }
-        for (k, n) in in_request {
-            let e = known.entry(k).or_insert(0);
-            *e = (*e).max(n);
-        }
-        fresh
+        st.last = keys.to_vec();
+    }
+
+    fn already_ingested(&self, session_id: &str, key: &[u8; 32], ordinal: usize) -> bool {
+        let seen = self.seen.lock().unwrap();
+        seen.get(session_id)
+            .and_then(|st| st.counts.get(key))
+            .is_some_and(|n| *n >= ordinal)
+    }
+
+    /// Only called after record and analyze both succeeded.
+    fn mark_ingested(&self, session_id: &str, key: [u8; 32], ordinal: usize) {
+        let mut seen = self.seen.lock().unwrap();
+        let e = seen
+            .entry(session_id.to_string())
+            .or_default()
+            .counts
+            .entry(key)
+            .or_insert(0);
+        *e = (*e).max(ordinal);
     }
 
     /// Run static + dynamic detection for a freshly recorded event. Returns
@@ -280,6 +342,22 @@ impl ProxyContext {
                 .unwrap()
                 .insert(event.session_id.clone());
             if first {
+                self.record_finding(&Finding {
+                    finding_type: "spectral_skipped".into(),
+                    scope: crate::detect::FindingScope::Static,
+                    severity: Severity::Medium,
+                    session_id: event.session_id.clone(),
+                    event_id: Some(event.event_id.clone()),
+                    tool: None,
+                    argument: None,
+                    matched_value: None,
+                    pattern: None,
+                    trust_zone: None,
+                    rationale: format!(
+                        "spectral: skipped (n={n} > {SPECTRAL_MAX_NODES}); spectral_anomaly and spectral_motif_match do not run for this session (#68)"
+                    ),
+                    score: Severity::Medium.weight(),
+                });
                 eprintln!(
                     "ember-agent: spectral analysis skipped for session {} — {n} events exceed SPECTRAL_MAX_NODES={SPECTRAL_MAX_NODES} (#68)",
                     event.session_id
@@ -420,12 +498,38 @@ pub(crate) fn ingest_request(
     // Parse + record + analyze every event from the inbound request.
     let mut high_findings: Vec<Finding> = Vec::new();
     if let Ok(events) = protocol.parse_request(&req.body, &session_id) {
-        for ev in ctx.new_events_only(&session_id, events) {
-            ctx.record(&ev);
-            for f in ctx.analyze(&ev) {
+        let _serial = ctx.ingest_serial.lock().unwrap();
+        let enforcing = ctx.config.mode != InterventionMode::Observe;
+        let keys: Vec<[u8; 32]> = events.iter().map(Event::full_digest).collect();
+        ctx.begin_history(&session_id, &keys);
+        let mut ordinals: HashMap<[u8; 32], usize> = HashMap::new();
+        for (ev, key) in events.into_iter().zip(keys) {
+            let ord = ordinals.entry(key).or_insert(0);
+            *ord += 1;
+            let ord = *ord;
+            if ctx.already_ingested(&session_id, &key, ord) {
+                continue;
+            }
+            if let Err(e) = ctx.try_record(&ev) {
+                // Not marked ingested: the next request replays it and retries.
+                eprintln!(
+                    "ember-agent: ingest of {} failed, will retry on replay: {e}",
+                    ev.event_id
+                );
+                continue;
+            }
+            let findings = ctx.analyze(&ev);
+            let mut blocking = false;
+            for f in findings {
                 if matches!(f.severity, Severity::High | Severity::Critical) {
+                    blocking = true;
                     high_findings.push(f);
                 }
+            }
+            // Warn/block: an event that raised a High finding stays "unseen" so a
+            // retry of the same history keeps tripping it.
+            if !(enforcing && blocking) {
+                ctx.mark_ingested(&session_id, key, ord);
             }
         }
     }
@@ -444,10 +548,23 @@ fn handle_messages(
     // token main-thread request for minutes before curl was even spawned.
     // Warn/block need the findings first and keep the inline path.
     let (session_id, high_findings) = if ctx.config.mode == InterventionMode::Observe {
-        let (ctx2, req2) = (Arc::clone(ctx), req.clone());
-        thread::spawn(move || {
-            ingest_request(&req2, &ctx2, protocol);
-        });
+        // Bounded by MAX_CONCURRENT. Saturated: skip analysis for this request,
+        // loudly; nothing is marked ingested, so the next replay picks it up.
+        if ctx.ingest_inflight.fetch_add(1, Ordering::SeqCst) >= MAX_CONCURRENT {
+            ctx.ingest_inflight.fetch_sub(1, Ordering::SeqCst);
+            eprintln!("ember-agent: ingest saturated ({MAX_CONCURRENT} in flight), analysis deferred to next request (#68)");
+        } else {
+            let (ctx2, req2) = (Arc::clone(ctx), req.clone());
+            thread::spawn(move || {
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    ingest_request(&req2, &ctx2, protocol);
+                }));
+                if r.is_err() {
+                    eprintln!("ember-agent: HIGH ingest thread panicked, events stay unseen and retry on replay (#68)");
+                }
+                ctx2.ingest_inflight.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
         (derive_session_id_for(req, &req.body, protocol), Vec::new())
     } else {
         ingest_request(req, ctx, protocol)

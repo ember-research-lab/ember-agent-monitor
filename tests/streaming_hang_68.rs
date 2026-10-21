@@ -76,24 +76,32 @@ fn mock_upstream(silent: bool) -> String {
 }
 
 fn start_proxy(tag: &str, upstream: String) -> (u16, Arc<AtomicBool>) {
+    let (port, stop, _, _) = start_proxy_ctx(tag, upstream);
+    (port, stop)
+}
+
+fn start_proxy_ctx(
+    tag: &str,
+    upstream: String,
+) -> (u16, Arc<AtomicBool>, Arc<ProxyContext>, std::path::PathBuf) {
     let port = free_port();
     let data_dir = std::env::temp_dir().join(format!("eam-68-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&data_dir);
     let cfg = DaemonConfig {
         proxy_port: port,
         mode: InterventionMode::Observe,
-        data_dir,
+        data_dir: data_dir.clone(),
         upstream_anthropic: upstream,
         ..DaemonConfig::default()
     };
     let stop = Arc::new(AtomicBool::new(false));
     let ctx = Arc::new(ProxyContext::new(cfg).expect("ctx"));
-    let s2 = Arc::clone(&stop);
+    let (ctx2, s2) = (Arc::clone(&ctx), Arc::clone(&stop));
     thread::spawn(move || {
-        let _ = serve(ctx, s2);
+        let _ = serve(ctx2, s2);
     });
     thread::sleep(Duration::from_millis(200));
-    (port, stop)
+    (port, stop, ctx, data_dir)
 }
 
 /// A conversation shaped like Claude Code's replayed history: `turns` assistant tool_use +
@@ -171,6 +179,82 @@ fn silent_upstream_stream_fails_loudly_with_502() {
         "502 must name the watchdog: {resp}"
     );
     assert!(took < Duration::from_secs(15), "held for {took:?} (#68)");
+    stop.store(true, Ordering::Relaxed);
+}
+
+/// Body whose history is exactly these user messages (one `user_prompt` event each).
+fn history(texts: &[&str]) -> String {
+    let msgs: Vec<String> = texts
+        .iter()
+        .map(|t| format!(r#"{{"role":"user","content":[{{"type":"text","text":"{t}"}}]}}"#))
+        .collect();
+    format!(
+        r#"{{"model":"claude-fable-5-1","max_tokens":10,"stream":true,"messages":[{}]}}"#,
+        msgs.join(",")
+    )
+}
+
+/// POST with a fixed session id; wait for the background ingest to settle; return the
+/// number of events recorded for the session so far.
+fn send_and_count(port: u16, dir: &std::path::Path, body: &str) -> usize {
+    let t = Instant::now();
+    let mut c = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+    let req = format!(
+        "POST /v1/messages HTTP/1.1\r\nHost: x\r\nx-claude-session-id: s68\r\nauthorization: Bearer x\r\nanthropic-version: 2023-06-01\r\ncontent-type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    c.write_all(req.as_bytes()).unwrap();
+    let mut out = Vec::new();
+    let _ = c.read_to_end(&mut out);
+    // Observe-mode ingest is asynchronous: wait until the line count is stable.
+    let path = dir.join("sessions/s68.jsonl");
+    let count = || {
+        std::fs::read_to_string(&path)
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
+    };
+    let mut last = count();
+    let mut stable = 0;
+    while stable < 5 && t.elapsed() < Duration::from_secs(20) {
+        thread::sleep(Duration::from_millis(100));
+        let n = count();
+        stable = if n == last { stable + 1 } else { 0 };
+        last = n;
+    }
+    last
+}
+
+#[test]
+fn event_whose_record_failed_is_analysed_on_the_next_replay() {
+    let (port, stop, ctx, dir) = start_proxy_ctx("fail", mock_upstream(false));
+    ctx.inject_record_failures(1);
+    assert_eq!(
+        send_and_count(port, &dir, &history(&["alpha"])),
+        0,
+        "record was injected to fail"
+    );
+    // Replay of the same history: the event must NOT have been marked seen.
+    assert_eq!(
+        send_and_count(port, &dir, &history(&["alpha"])),
+        1,
+        "failed event lost forever"
+    );
+    // And now it is deduped.
+    assert_eq!(send_and_count(port, &dir, &history(&["alpha"])), 1);
+    stop.store(true, Ordering::Relaxed);
+}
+
+#[test]
+fn compaction_that_drops_an_event_lets_it_recur_and_be_analysed() {
+    let (port, stop, _ctx, dir) = start_proxy_ctx("compact", mock_upstream(false));
+    // Seen three times.
+    assert_eq!(send_and_count(port, &dir, &history(&["X", "X", "X"])), 3);
+    // Same history again: nothing new.
+    assert_eq!(send_and_count(port, &dir, &history(&["X", "X", "X"])), 3);
+    // Compaction rewrites the history and drops X entirely.
+    assert_eq!(send_and_count(port, &dir, &history(&["Z"])), 4);
+    // X recurs once: must be analysed (stale count 3 would suppress it).
+    assert_eq!(send_and_count(port, &dir, &history(&["Z", "X"])), 5);
     stop.store(true, Ordering::Relaxed);
 }
 
