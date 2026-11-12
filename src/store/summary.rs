@@ -34,7 +34,17 @@ pub struct SessionSummary {
     pub findings_by_severity: BTreeMap<String, usize>,
     pub highest_severity: Option<String>,
     pub spectral_summary: Option<SpectralSummary>,
+    /// Set when the spectral gate capped this session (#80): spectral analysis
+    /// did not run, and this says so. Mutually exclusive with `spectral_summary`.
+    pub spectral_capped: Option<SpectralCapped>,
     pub vetpkg_packages_seen: Vec<String>,
+}
+
+/// Why a session has no `spectral_summary`: it exceeded the node cap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpectralCapped {
+    pub n_nodes: usize,
+    pub cap: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -122,12 +132,18 @@ impl SessionSummary {
             findings_by_severity,
             highest_severity: highest_severity.map(|s| s.as_str().into()),
             spectral_summary: None,
+            spectral_capped: None,
             vetpkg_packages_seen: Vec::new(),
         }
     }
 
     pub fn with_spectral(mut self, summary: SpectralSummary) -> Self {
         self.spectral_summary = Some(summary);
+        self
+    }
+
+    pub fn with_spectral_capped(mut self, n_nodes: usize, cap: usize) -> Self {
+        self.spectral_capped = Some(SpectralCapped { n_nodes, cap });
         self
     }
 
@@ -261,6 +277,15 @@ impl SessionSummary {
                 ),
             ));
             o.push(("spectral_summary".into(), JsonValue::Object(sp)));
+        }
+        if let Some(c) = &self.spectral_capped {
+            o.push((
+                "spectral_capped".into(),
+                JsonValue::Object(vec![
+                    ("n_nodes".into(), JsonValue::Number(c.n_nodes as f64)),
+                    ("cap".into(), JsonValue::Number(c.cap as f64)),
+                ]),
+            ));
         }
         if !self.vetpkg_packages_seen.is_empty() {
             o.push((

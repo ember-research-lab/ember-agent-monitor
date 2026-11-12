@@ -376,6 +376,12 @@ fn cmd_calibrate(args: Vec<String>) -> Result<u8, String> {
         for ev in events {
             graph.ingest(ev);
         }
+        if let crate::spectral::SpectralGate::Capped { n, cap } =
+            crate::spectral::spectral_gate(graph.dynamic_graph.events.len())
+        {
+            eprintln!("ember-agent: calibrate — skipping {path}: {n} events exceed SPECTRAL_MAX_NODES={cap} (#80)");
+            continue;
+        }
         let profile = crate::spectral::SpectralProfile::from_session(&graph);
         if profile.n_nodes >= 3 {
             profiles.push(profile);
@@ -568,7 +574,18 @@ fn finalize_one(store: &crate::store::Store, session_id: &str) -> Result<PathBuf
     if let Some(p) = &detection_cfg.posture {
         summary = summary.with_vetpkg_packages(p.packages_seen(&session_id));
     }
-    let profile = crate::spectral::SpectralProfile::from_session(&graph);
+    let profile = match crate::spectral::spectral_gate(graph.dynamic_graph.events.len()) {
+        crate::spectral::SpectralGate::Allowed => {
+            crate::spectral::SpectralProfile::from_session(&graph)
+        }
+        crate::spectral::SpectralGate::Capped { n, cap } => {
+            eprintln!(
+                "ember-agent: spectral analysis skipped for session {session_id} — {n} events exceed SPECTRAL_MAX_NODES={cap} (#80)"
+            );
+            summary = summary.with_spectral_capped(n, cap);
+            crate::spectral::SpectralProfile::empty()
+        }
+    };
     if profile.n_nodes >= 3 {
         let breakdown = detection_cfg
             .spectral_baseline
