@@ -1,5 +1,6 @@
 //! #80: `finalize-idle` obeys the same spectral node cap as the live proxy.
 
+use ember_agent_monitor::json::{self, JsonValue};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -62,13 +63,51 @@ fn session_above_cap_finalizes_fast_and_records_the_cap() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// At or below the cap the summary is byte-identical to what main produced
-/// before #80 (golden captured from origin/main 89ff8e2).
+/// Structural compare: same key set and order, same strings/ints/bools exactly;
+/// only non-integer numbers get a relative tolerance. The eigen-solve's last
+/// digits differ across platforms (macOS CI: spectral_dimension
+/// 1.0976590935600512 vs 1.0976590935600514 on Linux, rel diff ~2e-16), so
+/// byte equality of floats is not portable; 1e-9 leaves 7 orders of headroom.
+fn assert_same(path: &str, got: &JsonValue, want: &JsonValue) {
+    match (got, want) {
+        (JsonValue::Number(g), JsonValue::Number(w)) if w.fract() != 0.0 => {
+            let rel = (g - w).abs() / w.abs().max(f64::MIN_POSITIVE);
+            assert!(rel <= 1e-9, "{path}: {g} vs {w} (rel {rel:e})");
+        }
+        (JsonValue::Number(g), JsonValue::Number(w)) => assert_eq!(g, w, "{path}"),
+        (JsonValue::Str(g), JsonValue::Str(w)) => assert_eq!(g, w, "{path}"),
+        (JsonValue::Bool(g), JsonValue::Bool(w)) => assert_eq!(g, w, "{path}"),
+        (JsonValue::Null, JsonValue::Null) => {}
+        (JsonValue::Array(g), JsonValue::Array(w)) => {
+            assert_eq!(g.len(), w.len(), "{path}: array length");
+            for (i, (a, b)) in g.iter().zip(w).enumerate() {
+                assert_same(&format!("{path}[{i}]"), a, b);
+            }
+        }
+        (JsonValue::Object(g), JsonValue::Object(w)) => {
+            let gk: Vec<_> = g.iter().map(|(k, _)| k).collect();
+            let wk: Vec<_> = w.iter().map(|(k, _)| k).collect();
+            assert_eq!(gk, wk, "{path}: keys/order");
+            for ((k, a), (_, b)) in g.iter().zip(w) {
+                assert_same(&format!("{path}.{k}"), a, b);
+            }
+        }
+        _ => panic!("{path}: type mismatch {got:?} vs {want:?}"),
+    }
+}
+
+/// At or below the cap the summary matches what main produced before #80
+/// (golden captured from origin/main 89ff8e2): identical structure and
+/// non-float values, floats within 1e-9 relative.
 #[test]
-fn session_below_cap_is_byte_identical_to_pre_change() {
+fn session_below_cap_matches_pre_change_golden() {
     let (dir, summary, _) = finalize("small", 100);
     let golden = include_str!("fixtures/finalize_cap_golden_100.summary.json");
     let got = summary.replace(dir.to_str().unwrap(), "@DIR@");
-    assert_eq!(got, golden.trim_end());
+    assert_same(
+        "$",
+        &json::parse(&got).unwrap(),
+        &json::parse(golden).unwrap(),
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
