@@ -106,6 +106,33 @@ pub fn run_dynamic(event: &Event, graph: &SessionGraph, cfg: &DetectionConfig) -
     out
 }
 
+/// The finding recorded whenever the spectral gate caps a session (#68, #80).
+/// Shared by the proxy and the batch path so the record cannot drift.
+pub fn spectral_skipped_finding(
+    session_id: &str,
+    event_id: Option<String>,
+    n: usize,
+    cap: usize,
+) -> Finding {
+    use crate::types::Severity;
+    Finding {
+        finding_type: "spectral_skipped".into(),
+        scope: FindingScope::Static,
+        severity: Severity::Medium,
+        session_id: session_id.to_string(),
+        event_id,
+        tool: None,
+        argument: None,
+        matched_value: None,
+        pattern: None,
+        trust_zone: None,
+        rationale: format!(
+            "spectral: skipped (n={n} > {cap}); spectral_anomaly and spectral_motif_match do not run for this session (#68, #80)"
+        ),
+        score: Severity::Medium.weight(),
+    }
+}
+
 /// Convenience: run all detections over a complete event log. Used by the
 /// `replay` command and the regression-test harness.
 pub fn run_all(events: &[Event], cfg: &DetectionConfig) -> Vec<Finding> {
@@ -122,6 +149,12 @@ pub fn run_all(events: &[Event], cfg: &DetectionConfig) -> Vec<Finding> {
     }
     // Spectral runs once over the final graph in offline mode. Online mode
     // would call run_spectral periodically; see proxy.rs.
-    findings.extend(run_spectral(&graph, cfg));
+    match crate::spectral::spectral_gate(graph.dynamic_graph.events.len()) {
+        crate::spectral::SpectralGate::Allowed => findings.extend(run_spectral(&graph, cfg)),
+        crate::spectral::SpectralGate::Capped { n, cap } => {
+            let sid = events.first().map(|e| e.session_id.as_str()).unwrap_or("");
+            findings.push(spectral_skipped_finding(sid, None, n, cap));
+        }
+    }
     findings
 }
