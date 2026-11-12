@@ -8,6 +8,13 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed (#80)
+- **`finalize-idle` no longer runs the O(n^3) Jacobi solver on whole sessions.** The 256-node cap from #68 is now one shared constant and
+  gate (`spectral::SPECTRAL_MAX_NODES`, `spectral_gate`) used by the proxy, the daemon finalizer, `finalize-idle`, `calibrate` and offline
+  replay. A capped session gets a `spectral_skipped` finding and `"spectral_capped":{"n_nodes":N,"cap":256}` in its summary (additive field,
+  `spectral_summary` absent), never a silent skip. `eigh` panics above `EIGH_HARD_MAX_NODES` (1024) so a caller that forgets the gate fails
+  fast. Sessions at or below the cap are byte-identical to before. Tests: `tests/finalize_cap.rs`, `jacobi::refuses_input_above_hard_max`.
+
 ### Added (#74)
 - **Local-model Anthropic route.** `--upstream-local-anthropic URL` maps the exact path `/local/v1/messages` (query kept) to a local
   Anthropic-compatible server (llama-server), so `claude -p` Route B jobs with `ANTHROPIC_BASE_URL=http://127.0.0.1:9452/local`

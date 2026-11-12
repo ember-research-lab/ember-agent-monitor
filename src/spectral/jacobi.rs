@@ -16,11 +16,24 @@
 const MAX_SWEEPS: usize = 50;
 const CONVERGENCE_TOL: f64 = 1e-12;
 
+/// Hard limit on matrix size (#80). Callers are expected to gate on
+/// `spectral_gate` (cap 256) first; this is the backstop so a caller that
+/// forgets fails fast instead of running for days.
+pub const EIGH_HARD_MAX_NODES: usize = 1024;
+
 /// Symmetric eigendecomposition. The input is assumed symmetric; the lower
 /// triangle is read. Returns `(eigenvalues, eigenvectors)` where
 /// eigenvectors are columns. Eigenvalues are sorted ascending.
+///
+/// # Panics
+/// If `matrix.len() > EIGH_HARD_MAX_NODES` (loud, by design: #80).
 pub fn eigh(matrix: &[Vec<f64>]) -> (Vec<f64>, Vec<Vec<f64>>) {
     let n = matrix.len();
+    assert!(
+        n <= EIGH_HARD_MAX_NODES,
+        "eigh: refusing n={n} > EIGH_HARD_MAX_NODES={EIGH_HARD_MAX_NODES}; \
+         gate the caller with spectral::spectral_gate (#80)"
+    );
     if n == 0 {
         return (Vec::new(), Vec::new());
     }
@@ -209,5 +222,13 @@ mod tests {
         assert!(vals[0].abs() < 1e-9);
         assert!(vals[1] > 0.5);
         assert!(vals[2] > 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "EIGH_HARD_MAX_NODES")]
+    fn refuses_input_above_hard_max() {
+        let n = EIGH_HARD_MAX_NODES + 1;
+        let m = vec![vec![0.0; n]; n];
+        let _ = eigh(&m);
     }
 }

@@ -90,6 +90,10 @@ The two file formats per session play different roles:
 
 All others are optional and may be absent on degraded fidelity sessions.
 
+`spectral_capped` (`{"n_nodes": N, "cap": 256}`, additive, #80) appears instead of
+`spectral_summary` when the session exceeded the spectral node cap and spectral
+analysis was skipped.
+
 ### Field stability
 
 Schema versions are integers, monotonically increasing. v1 fields above

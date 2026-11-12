@@ -39,3 +39,28 @@ pub use laplacian::{build_laplacian, build_session_laplacian, LaplacianKind};
 pub use motif::{check_motifs, AttackMotif};
 pub use per_role::{CapabilityMix, PerRoleBaseline, RoleAssessment, RoleBaseline};
 pub use profile::SpectralProfile;
+
+/// Largest session graph the O(n^3) spectral pass runs on (#68, #80). One
+/// constant and one gate for every caller: the live proxy, the daemon's
+/// session finalizer, `finalize-idle` and offline replay. Above the cap the
+/// spectral rules and summary are skipped, and the skip is recorded.
+pub const SPECTRAL_MAX_NODES: usize = 256;
+
+/// Outcome of the spectral gate. `n` is the session's event count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpectralGate {
+    Allowed,
+    Capped { n: usize, cap: usize },
+}
+
+/// The single decision point for "may spectral analysis run on this session".
+pub fn spectral_gate(n: usize) -> SpectralGate {
+    if n <= SPECTRAL_MAX_NODES {
+        SpectralGate::Allowed
+    } else {
+        SpectralGate::Capped {
+            n,
+            cap: SPECTRAL_MAX_NODES,
+        }
+    }
+}

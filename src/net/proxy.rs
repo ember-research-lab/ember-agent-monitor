@@ -51,11 +51,9 @@ struct SeenState {
     last: Vec<[u8; 32]>,
 }
 
-/// Largest session graph the O(n^3) spectral pass runs on (#68). Claude Code
-/// replays the whole conversation on every request, so an uncapped graph
-/// grows past what Jacobi can finish in minutes. Above the cap the spectral
-/// rules are skipped and the skip is logged once per session.
-pub const SPECTRAL_MAX_NODES: usize = 256;
+/// The spectral cap lives in `crate::spectral` (#80) so the proxy and the
+/// batch path share one constant and one gate.
+pub use crate::spectral::SPECTRAL_MAX_NODES;
 
 /// Watchdog (#68): a streaming request whose upstream has sent no response
 /// head within this many seconds is failed with a 502 and a log line instead
@@ -252,7 +250,18 @@ impl ProxyContext {
         }
         // Add spectral summary if we computed one (cheap because the graph
         // is already in hand here).
-        let profile = crate::spectral::SpectralProfile::from_session(&graph);
+        let profile = match crate::spectral::spectral_gate(graph.dynamic_graph.events.len()) {
+            crate::spectral::SpectralGate::Allowed => {
+                crate::spectral::SpectralProfile::from_session(&graph)
+            }
+            crate::spectral::SpectralGate::Capped { n, cap } => {
+                eprintln!(
+                    "ember-agent: spectral analysis skipped for session {session_id} — {n} events exceed SPECTRAL_MAX_NODES={cap} (#80)"
+                );
+                summary = summary.with_spectral_capped(n, cap);
+                crate::spectral::SpectralProfile::empty()
+            }
+        };
         if profile.n_nodes >= 3 {
             let baseline = self
                 .detection
@@ -329,7 +338,8 @@ impl ProxyContext {
             && n % self.detection.spectral_cadence == 0;
         // Eigendecomposition runs on a snapshot, outside the graphs lock: the
         // lock is shared by every session and by the SSE relay (#68).
-        let snapshot = if spectral_due && n <= SPECTRAL_MAX_NODES {
+        let gate = crate::spectral::spectral_gate(n);
+        let snapshot = if spectral_due && gate == crate::spectral::SpectralGate::Allowed {
             Some(graph.clone())
         } else {
             None
@@ -342,22 +352,12 @@ impl ProxyContext {
                 .unwrap()
                 .insert(event.session_id.clone());
             if first {
-                self.record_finding(&Finding {
-                    finding_type: "spectral_skipped".into(),
-                    scope: crate::detect::FindingScope::Static,
-                    severity: Severity::Medium,
-                    session_id: event.session_id.clone(),
-                    event_id: Some(event.event_id.clone()),
-                    tool: None,
-                    argument: None,
-                    matched_value: None,
-                    pattern: None,
-                    trust_zone: None,
-                    rationale: format!(
-                        "spectral: skipped (n={n} > {SPECTRAL_MAX_NODES}); spectral_anomaly and spectral_motif_match do not run for this session (#68)"
-                    ),
-                    score: Severity::Medium.weight(),
-                });
+                self.record_finding(&crate::detect::spectral_skipped_finding(
+                    &event.session_id,
+                    Some(event.event_id.clone()),
+                    n,
+                    SPECTRAL_MAX_NODES,
+                ));
                 eprintln!(
                     "ember-agent: spectral analysis skipped for session {} — {n} events exceed SPECTRAL_MAX_NODES={SPECTRAL_MAX_NODES} (#68)",
                     event.session_id
