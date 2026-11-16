@@ -5,8 +5,9 @@ API endpoints, builds a structural graph of execution, applies detection
 rules — including v2 spectral methods — and intervenes (observe / warn /
 block) on findings.
 
-Tool 2 of 4 in the Ember security suite. Open source. Zero dependencies.
-`#![forbid(unsafe_code)]`. Auditable in one sitting (~6300 LOC).
+Part of the Ember security tooling; the install-time companion is
+[vetpkg](https://github.com/ember-research-lab/vetpkg). Open source. Zero
+dependencies. `#![forbid(unsafe_code)]`.
 
 ## Documents
 
@@ -247,10 +248,8 @@ mechanism (a committed model ignores forward-direction prompts).
 ## Status
 
 - v1 spec deliverables complete.
-- 46 unit tests + 11 attack-pattern fixtures + 1 forward-warn integration test.
-- 0 false positives on the 5-fixture clean calibration corpus.
-- Suite-level integration validated via
-  [`../tests/e2e_full_chain.sh`](../tests/e2e_full_chain.sh).
+- Test suites and attack-pattern fixtures: see [`tests/`](tests/) and
+  [`threat-intel/`](threat-intel/).
 
 ## License
 
