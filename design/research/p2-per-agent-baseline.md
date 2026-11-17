@@ -3,7 +3,7 @@
 **Status:** research / decision doc (not implementation). Drives the P2
 `ember-agent-monitor` extension that backs `smb_envelope::monitor::BehavioralBaseline`.
 **Owner consumer:** `ember-smb-platform` (plan §3a insider model, §8.6 open question).
-**Co-input consumer:** Whale Signal (interface must stay neutral, not SMB-shaped).
+**Co-input consumer:** another project (interface must stay neutral, not SMB-shaped).
 
 > Read order: this doc → `src/spectral/{baseline,profile,motif,distance}.rs`
 > → `design/agent-monitor-spec.md` §4/§5 → SMB `docs/plan-of-record.md` §3a/§8.6
@@ -284,8 +284,8 @@ Ship a **per-role static-prior baseline with per-instance online adaptation**:
 
 5. **Keep the boundary neutral (multi-consumer).** The `smb_envelope` side
    stays exactly the existing `observe`/`assess` + `BehaviorSample` /
-   `Assessment` — **no SMB or role vocabulary leaks into the trait** (Whale
-   Signal co-consumer). `RoleId` and the role→prior mapping live on the
+   `Assessment` — **no SMB or role vocabulary leaks into the trait** (second
+   co-consumer). `RoleId` and the role→prior mapping live on the
    `ember-agent-monitor` impl + the consumer's config, not in the trait. The
    consumer tags each sample's `dimension` and supplies the role binding when
    it constructs the impl; the trait never names a role. (See §6, fork F1, for
@@ -308,7 +308,7 @@ role to a baseline.
   unchanged. *(Recommended — keeps the trait neutral; SMB owns the agent
   catalog and roles anyway.)*
 - (b) Add an `assess`/`observe` overload carrying role context — pollutes the
-  neutral trait, hurts the Whale Signal co-consumer. *(Reject unless (a) proves
+  neutral trait, hurts the second co-consumer. *(Reject unless (a) proves
   unworkable.)*
 - (c) Encode role inside the `AgentId` string convention — implicit, brittle.
 
@@ -391,7 +391,7 @@ impl BehavioralBaseline for PerRoleBaseline {
 - `RoleBaseline` = `{ spectral: Baseline /* reuse */, kind_caps_ref:
   Histogram, egress_cadence: ControlLimits }`.
 - `RoleId` and `resolve_role` live **here + in the consumer's config**, never
-  in the trait — so Whale Signal binds its own entities to its own roles
+  in the trait — so the second consumer binds its own entities to its own roles
   without inheriting SMB vocabulary.
 - `Quarantine` impl is separate (already a separate trait); the baseline only
   *scores* — the decision to quarantine is the consumer's, bounded by
@@ -422,9 +422,9 @@ impl BehavioralBaseline for PerRoleBaseline {
    per-session?), and how to handle bursty-but-legitimate roles (scheduler
    sending many confirmations at 9am). Needs role-realistic temporal fixtures —
    which the current corpus (causal-topological, untimed) does not yet contain.
-5. **Whale Signal co-input.** This doc is SMB-driven; the interface is held
+5. **Second-consumer co-input.** This doc is SMB-driven; the interface is held
    neutral, but the *role-prior + shrinkage* mechanism should be checked
-   against a Whale Signal entity story before the impl freezes, so the online
+   against a second consumer's entity story before the impl freezes, so the online
    layer isn't quietly SMB-shaped.
 
 ---

@@ -65,7 +65,7 @@ This is not a marketing position. It is the architecture that follows from takin
 
 ---
 
-### Tool 3: Persistent (premium, cross-session)
+### Tool 3: Persistent (cross-session)
 
 **Layer:** Long-horizon agent behavior across sessions. What the agent has done over time.
 
@@ -85,11 +85,10 @@ This is not a marketing position. It is the architecture that follows from takin
 
 **Status:** Architectural placeholder. Built after agent monitor v1 ships.
 
-**Why premium:** Persistent state is operationally heavier — storage growth, retention policies, ongoing data management. Aligns naturally with users who pay for ongoing service rather than a one-time download. Also serves as the funnel: users who hit the OSS tools' limits find themselves needing this.
 
 ---
 
-### Tool 4: Network (premium, egress)
+### Tool 4: Network (egress)
 
 **Layer:** Wire-level network observability. What actually crosses the network.
 
@@ -109,7 +108,6 @@ This is not a marketing position. It is the architecture that follows from takin
 
 **Status:** Architectural placeholder. Build order TBD — likely after persistent.
 
-**Why premium:** Network observation requires kernel-level hooks (eBPF on Linux, NetworkExtension on macOS, ETW on Windows) that are operationally substantial and platform-specific. Premium tier appropriate for the engineering investment.
 
 ---
 
@@ -182,8 +180,8 @@ Shared state lives under `~/.ember/`:
 │   ├── sessions/<id>.jsonl      — completed session graphs
 │   ├── findings.db              — SQLite of in-flight detections
 │   └── events.sock              — Unix socket for live events
-├── persistent/                   — premium, cross-session state
-└── network/                      — premium, network observations
+├── persistent/                   — cross-session state
+└── network/                      — network observations
 ```
 
 ### Data flow
@@ -196,7 +194,7 @@ Shared state lives under `~/.ember/`:
 
 **Persistent ↔ network.** Both consume from the same primary streams (session graphs, network events). They may correlate findings between themselves at the analysis layer, but neither depends on the other for core operation.
 
-**All tools → user surface.** Each tool has its own CLI / TUI / web UI. A unified dashboard (also premium) aggregates findings across tools and shows the combined picture. Aggregation at presentation, not at substrate.
+**All tools → user surface.** Each tool has its own CLI / TUI / web UI. A unified dashboard aggregates findings across tools and shows the combined picture. Aggregation at presentation, not at substrate.
 
 ### Tools work standalone
 
@@ -207,7 +205,7 @@ Every tool functions usefully alone:
 - Persistent without agent monitor can still consume session logs from any compatible source
 - Network without the others is a standalone egress monitor
 
-The integration upgrades each tool when paired with others, but does not create dependencies. **A user can run any subset.** This is a deliberate posture — the suite is honest about each tool's value alone, and the upsell to premium is the marginal value of additional layers, not the sudden activation of features that should have shipped in OSS.
+The integration upgrades each tool when paired with others, but does not create dependencies. **A user can run any subset.** This is a deliberate posture — the suite is honest about each tool's value alone, and an additional layer brings its own marginal value, not the sudden activation of features that should have shipped in the first tool.
 
 ---
 
@@ -215,7 +213,7 @@ The integration upgrades each tool when paired with others, but does not create 
 
 ### The pitch
 
-> Security tooling that's honest about scope. Four layers, each doing its layer well. Open source at the layers individuals can audit and verify themselves. Premium at the layers that need persistent infrastructure. No single tool claims to be the answer — together they cover the surface.
+> Security tooling that's honest about scope. Four layers, each doing its layer well. Open source at the layers individuals can audit and verify themselves. No single tool claims to be the answer — together they cover the surface.
 
 ### What this position rejects
 
@@ -230,13 +228,6 @@ The integration upgrades each tool when paired with others, but does not create 
 - **Independent shipping.** Each tool's roadmap is independent. vetpkg can ship features without coordination with agent monitor.
 - **Independent failure.** A bug in one tool doesn't break the others. A user can run with three tools while one is broken.
 - **Independent auditing.** A security-conscious user can audit each tool individually. The audit surface per tool is small.
-- **Honest upgrade story.** The transition from OSS to premium is "you've outgrown what this layer can catch alone, here's the layer you need next." Not "you should have always been on the paid version."
-
-### Three audiences
-
-- **Solo developers and small teams.** OSS layers (vetpkg + agent monitor) provide meaningful defense against the common attack patterns. No vendor lock-in, no SaaS dependency, no telemetry leaving the machine.
-- **Security-conscious individuals.** Full suite (all four). Run premium tools locally for the layers OSS cannot cover. Aggregated dashboard. Local-first throughout.
-- **Organizations.** Enterprise pricing for premium tools. Support and audit assistance. The OSS tools remain free; the value proposition for enterprise is the premium layers and operational support.
 
 ### Why this beats single-product approaches
 
@@ -266,16 +257,15 @@ The honest version of this argument is: a single product cannot solve AI securit
 
 ### Mid (v2 of suite)
 
-- Persistent tool ships premium
+- Persistent tool ships
 - Agent monitor v2 with spectral methods
 - Network tool design
 - Unified dashboard prototype
 
 ### Later
 
-- Network tool ships premium
+- Network tool ships
 - Cross-tool correlation features
-- Enterprise tier for premium tools
 - Long-term: evaluate whether the four-tool model is right or whether new layers emerge
 
 The roadmap is bottom-up. Each layer is built only after the previous one has shipped and proven valuable. No premature platform-thinking; no roadmap items that depend on imagined future features.

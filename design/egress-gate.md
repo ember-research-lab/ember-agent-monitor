@@ -19,7 +19,7 @@ The gate is **neutral**: a `principal` performs an `OutfacingAction` within a `n
 assumption about what those map to. Consumers adapt their own interface onto it:
 - **Ember SMB platform** maps principal→agent id, namespace→tenant id, and implements its
   `smb_envelope::EgressGate` trait as a thin adapter over this API.
-- **Whale Signal** maps them to its own bot/account model.
+- **Another project** maps them to its own bot/account model.
 
 Keep this API free of any single consumer's vocabulary. Where consumers diverge, expose the union as
 config; consumer-specific policy (who may approve, auto-approval criteria) stays in the consumer.

@@ -8,6 +8,9 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+- Public-repo cleanup: commercial-split text removed from the design docs, the lab's own dogfood setup moved to `docs/dogfood.md`, `Cargo.toml` `readme` now points at `README.md`, and `.claude/settings.json` (plugin enablement only) removed. README status line and quick start corrected (pre-release; `status` checks the default port only). No code behaviour change.
+
 ### Fixed (#80)
 - **`finalize-idle` no longer runs the O(n^3) Jacobi solver on whole sessions.** The 256-node cap from #68 is now one shared constant and
   gate (`spectral::SPECTRAL_MAX_NODES`, `spectral_gate`) used by the proxy, the daemon finalizer, `finalize-idle`, `calibrate` and offline
@@ -145,7 +148,7 @@ in [`threat-intel/CHANGELOG.md`](threat-intel/CHANGELOG.md).
   `/openai` upstream pointed at the local llama-server.
 
 ### Changed
-- CI: every job has `timeout-minutes` (whale-signal#258).
+- CI: every job has `timeout-minutes`.
 
 ### Added
 - **OpenAI-compatible local-lane pass-through (`net::openai_pass`).** `POST /openai/v1/chat/completions`

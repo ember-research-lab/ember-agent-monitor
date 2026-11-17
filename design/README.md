@@ -8,7 +8,7 @@ This bundle is the output of an extended design session for the Ember runtime ag
 
 - **`agent-monitor-spec.md`** — v1 specification for the agent monitor itself. Scope, architecture, data model, detection rules, intervention semantics, integration points, threat model, validation status, implementation roadmap. This is the contract for the implementer.
 
-- **`ember-suite-overview.md`** — architectural context for the full four-tool suite (vetpkg, agent monitor, persistent, network). Coverage matrix, integration architecture, strategic positioning. Read this first if you want to understand why the agent monitor's scope is what it is.
+- **`ember-suite-overview.md`** — architectural context for the full four-tool suite (vetpkg, agent monitor, persistent, network). Coverage matrix, integration architecture, design stance. Read this first if you want to understand why the agent monitor's scope is what it is.
 
 Read order: `ember-suite-overview.md` first for context, then `agent-monitor-spec.md` for the v1 details.
 
@@ -81,6 +81,6 @@ v2 (spectral methods) is on the explicit roadmap, earned its priority through th
 
 ## Stance
 
-Every Ember tool shares the same posture: local-first, zero dependencies, auditable in one sitting, honest scope. The OSS layer (vetpkg + agent monitor) covers the attack classes individuals can audit and verify themselves; the premium layer (persistent + network) covers the layers that need persistent infrastructure. No single tool tries to be the answer — together they cover the surface, and each is honest about what it doesn't do.
+Every Ember tool shares the same posture: local-first, zero dependencies, auditable in one sitting, honest scope. The first layer (vetpkg + agent monitor) covers the attack classes individuals can audit and verify themselves; the later layer (persistent + network) covers the layers that need persistent infrastructure. No single tool tries to be the answer — together they cover the surface, and each is honest about what it doesn't do.
 
 See `ember-suite-overview.md` for the full architectural commitment.

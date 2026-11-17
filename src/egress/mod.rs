@@ -12,7 +12,7 @@
 //! ## Multi-consumer by design
 //!
 //! This is a **neutral** capability consumed by outward-facing products (the SMB
-//! agent platform and Whale Signal to start, and future products). It speaks in
+//! agent platform and another project to start, and future products). It speaks in
 //! neutral terms — a `principal` performs an action within a `namespace` — and
 //! makes no assumption about what those map to (an "agent" + "tenant", a "bot" +
 //! "account", …). Each consumer adapts its own gate trait onto this API.

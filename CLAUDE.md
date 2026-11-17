@@ -25,8 +25,8 @@ proxy. Has durable held state (`PersistentEgressGate`, #6) + bypass
 
 ## Read the design docs in this order
 
-1. `design/ember-suite-overview.md` — the four-tool architecture + OSS/premium
-   split. Read first: it explains *why* this tool's scope is what it is.
+1. `design/ember-suite-overview.md` — the four-tool architecture.
+   Read first: it explains *why* this tool's scope is what it is.
 2. `design/agent-monitor-spec.md` — the v1 spec (scope, trust zones, event
    schema, detection rules §4, intervention §5, constraints §10). The
    implementer's contract; modules cite its section numbers.
@@ -54,7 +54,7 @@ The spec is deliberate about what this tool is **not** (`agent-monitor-spec.md`
 Each gap names the Ember tool that covers it — keep them honest, and don't
 grow this tool into another tool's layer.
 
-## House rules — deltas from the workspace CLAUDE.md (CI: `.github/workflows/ci.yml`)
+## House rules (CI: `.github/workflows/ci.yml`)
 
 - **Zero deps:** `[dependencies]` empty (CI greps it) and `[dev-dependencies]`
   empty too; every primitive is in-repo. New dep = threat-model update +
