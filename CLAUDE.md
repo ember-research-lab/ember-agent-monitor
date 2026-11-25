@@ -81,7 +81,7 @@ Two validation surfaces under `tests/fixtures/`, both kept green:
 counts match `expected.json` **exactly** — a dropped *or* unexpected finding
 is a red build, and a fixture missing `expected.json` errors rather than
 silently skipping. Adding a fixture is a one-directory drop, no test-code
-change. Currently 31 fixtures + a 5-session clean calibration corpus
+change. The fixtures are the directories under `threat-intel/fixtures/`, plus a 5-session clean calibration corpus
 (`threat-intel/calibration/clean_corpus/`).
 
 **Honest-negative fixtures.** `spectral_clean_pipeline/` pins a case the
